@@ -1,4 +1,3 @@
-import ts from "typescript";
 import { collectEdges } from "./imports.js";
 import {
   IR_VERSION,
@@ -13,14 +12,14 @@ import { buildModuleEdges, findCycles } from "./graph.js";
 import { inferModules } from "./modules.js";
 import { discoverProject, relativeToRoot, type DiscoveredProject } from "./project.js";
 import { evaluateRules } from "./rules.js";
-import { sha256 } from "./stable.js";
+import { canonicalStringify, sha256 } from "./stable.js";
 
 function languageFor(file: string): "typescript" | "javascript" {
   return /\.(?:jsx?|mjs|cjs)$/i.test(file) ? "javascript" : "typescript";
 }
 
-function linesIn(file: string): number {
-  const text = ts.sys.readFile(file) ?? "";
+function linesIn(file: string, contents: ReadonlyMap<string, string>): number {
+  const text = contents.get(file) ?? "";
   return text === "" ? 0 : text.split(/\r?\n/).length;
 }
 
@@ -51,6 +50,7 @@ function metrics(
     externalImports: imports.filter((edge) => edge.resolution === "external").length,
     assetImports: imports.filter((edge) => edge.resolution === "asset").length,
     unresolvedImports: imports.filter((edge) => edge.resolution === "unresolved").length,
+    outOfScopeImports: imports.filter((edge) => edge.resolution === "out-of-scope").length,
     moduleEdges: moduleEdges.length,
     cycles: cycles.length,
     deepImports: moduleEdges.reduce((total, edge) => total + edge.deepImports, 0),
@@ -67,7 +67,7 @@ function sourceFiles(project: DiscoveredProject): SourceFile[] {
       return {
         path: relative,
         language: languageFor(file),
-        lines: linesIn(file),
+        lines: linesIn(file, project.fileContents),
         provenance: {
           origin: "observed" as const,
           analyzer: "typescript-source",
@@ -82,7 +82,7 @@ function inputHash(project: DiscoveredProject): string {
   return sha256(
     project.files.map((file) => ({
       path: relativeToRoot(project.root, file),
-      content: ts.sys.readFile(file) ?? "",
+      content: project.fileContents.get(file) ?? "",
     })),
   );
 }
@@ -96,7 +96,10 @@ function createReceipt(
     toolVersion: TOOL_VERSION,
     irVersion: IR_VERSION,
     configHash: sha256(project.config),
-    compilerOptionsHash: sha256(project.compilerOptions),
+    compilerOptionsHash: sha256({
+      default: project.compilerOptions,
+      configurations: [...new Set([...project.compilerOptionsByFile.values()].map(canonicalStringify))].sort(),
+    }),
     inputHash: inputHash(project),
   };
   return {

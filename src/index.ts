@@ -46,6 +46,7 @@ export type {
   ModuleEdge,
   Provenance,
   Resolution,
+  ResolutionConfidence,
   SnapshotPolicy,
   SnapshotReceipt,
   SourceFile,

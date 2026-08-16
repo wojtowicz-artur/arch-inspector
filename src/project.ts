@@ -11,7 +11,13 @@ export interface DiscoveredProject {
   tsconfigPath: string;
   sourceRoot: string;
   compilerOptions: ts.CompilerOptions;
+  /** Compiler options selected for the tsconfig that owns each source file. */
+  compilerOptionsByFile: ReadonlyMap<string, ts.CompilerOptions>;
   files: string[];
+  /** Source text cache shared by extraction, metrics and receipt hashing. */
+  fileContents: ReadonlyMap<string, string>;
+  /** Module resolution cache populated lazily by the import extractor. */
+  resolutionCache: Map<string, ts.ResolvedModule | undefined>;
   config: InspectorConfig;
 }
 
@@ -126,6 +132,7 @@ export function discoverProject(inputPath = "."): DiscoveredProject {
   const config = readInspectorConfig(root);
   const visited = new Set<string>();
   const referencedFiles: string[] = [];
+  const compilerOptionsByFile = new Map<string, ts.CompilerOptions>();
   let compilerOptions: ts.CompilerOptions = {};
 
   const readConfig = (configPath: string): void => {
@@ -138,7 +145,18 @@ export function discoverProject(inputPath = "."): DiscoveredProject {
     }
     const configRoot = path.dirname(normalizedConfig);
     const parsed = ts.parseJsonConfigFileContent(read.config, ts.sys, configRoot, undefined, normalizedConfig);
-    referencedFiles.push(...parsed.fileNames.filter(isSourceFile).map(normalize));
+    if (parsed.errors.length > 0) {
+      throw new Error(
+        ts.flattenDiagnosticMessageText(parsed.errors.map((diagnostic) => diagnostic.messageText).join("\n"), "\n"),
+      );
+    }
+    const sourceFiles = parsed.fileNames.filter(isSourceFile).map(normalize);
+    referencedFiles.push(...sourceFiles);
+    for (const file of sourceFiles) {
+      // The root config wins if a referenced project accidentally includes the
+      // same file as well. This keeps the owning project deterministic.
+      if (!compilerOptionsByFile.has(file)) compilerOptionsByFile.set(file, parsed.options);
+    }
     compilerOptions = { ...compilerOptions, ...parsed.options };
     const references = Array.isArray(read.config?.references) ? read.config.references : [];
     for (const reference of references) {
@@ -156,6 +174,7 @@ export function discoverProject(inputPath = "."): DiscoveredProject {
 
   readConfig(tsconfigPath);
   const files = filterProjectFiles(root, [...new Set(referencedFiles)].sort(), config);
+  const fileContents = new Map(files.map((file) => [file, ts.sys.readFile(file) ?? ""]));
   const sourceRoot = normalize(
     compilerOptions.rootDir ??
       path.join(
@@ -171,7 +190,10 @@ export function discoverProject(inputPath = "."): DiscoveredProject {
     tsconfigPath: normalize(tsconfigPath),
     sourceRoot,
     compilerOptions,
+    compilerOptionsByFile,
     files,
+    fileContents,
+    resolutionCache: new Map(),
     config,
   };
 }

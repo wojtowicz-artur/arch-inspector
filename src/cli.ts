@@ -14,11 +14,13 @@ function usage(): string {
   arch graph [project] [--json] [--out <file>]  # Graphviz DOT by default
   arch check [project] [--json] [--out <file>] [--fail-on <selector,...>]
   arch diff <git-ref|snapshot.json> [project] [--json] [--out <file>] [--check] [--fail-on <selector,...>]
+  arch audit [git-ref|snapshot.json] [project] [--json] [--out <file>] [--fail-on <selector,...>]
 
 Selectors include: all, violations, cycles, deep-imports, forbidden-dependency.
 Without --fail-on, check is report-only unless the project config declares failOn.
 The inspector reads an existing TypeScript project and emits a deterministic Architecture IR snapshot.
-The diff command compares the current project with a comparable snapshot or Git ref without changing the worktree.`;
+The diff command compares the current project with a comparable snapshot or Git ref without changing the worktree.
+The audit command is a changed-architecture gate: it compares against the base and fails on introduced violations.`;
 }
 
 interface ParsedArgs {
@@ -63,7 +65,7 @@ function parseFailOn(args: string[]): string[] | undefined {
 
 function parseArgs(args: string[]): ParsedArgs {
   const command = args[0] ?? "inspect";
-  if (!["inspect", "graph", "check", "diff", "help", "--help", "-h"].includes(command))
+  if (!["inspect", "graph", "check", "diff", "audit", "help", "--help", "-h"].includes(command))
     throw new Error(`Unknown command '${command}'.\n\n${usage()}`);
   const positional: string[] = [];
   let out: string | undefined;
@@ -80,13 +82,13 @@ function parseArgs(args: string[]): ParsedArgs {
     }
   }
   const failOn = parseFailOn(args);
-  if (command === "diff") {
+  if (command === "diff" || command === "audit") {
     return {
       command,
       base: positional[0] ?? "HEAD",
       project: positional[1] ?? ".",
       json: args.includes("--json"),
-      check: args.includes("--check"),
+      check: command === "audit" || args.includes("--check"),
       ...(failOn ? { failOn } : {}),
       ...(out ? { out } : {}),
     };
@@ -110,7 +112,7 @@ function renderText(snapshot: ArchitectureSnapshot): string {
     `Snapshot: ${snapshot.receipt.snapshotId}`,
     `Files: ${metrics.sourceFiles}`,
     `Modules: ${metrics.modules}`,
-    `Imports: ${metrics.imports} (${metrics.internalImports} internal, ${metrics.externalImports} external, ${metrics.assetImports} assets, ${metrics.unresolvedImports} unresolved)`,
+    `Imports: ${metrics.imports} (${metrics.internalImports} internal, ${metrics.externalImports} external, ${metrics.assetImports} assets, ${metrics.unresolvedImports} unresolved, ${metrics.outOfScopeImports ?? 0} out-of-scope)`,
     `Module edges: ${metrics.moduleEdges}`,
     `Cycles: ${metrics.cycles}`,
     `Deep imports: ${metrics.deepImports}`,
@@ -224,7 +226,7 @@ function main(): void {
     console.log(usage());
     return;
   }
-  if (parsed.command === "diff") {
+  if (parsed.command === "diff" || parsed.command === "audit") {
     const { diff, current } = diffProject(parsed);
     const output = parsed.json ? `${JSON.stringify(diff, null, 2)}\n` : `${renderDiff(diff)}\n`;
     if (parsed.out) fs.writeFileSync(path.resolve(parsed.out), JSON.stringify(diff, null, 2) + "\n", "utf8");

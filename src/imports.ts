@@ -15,7 +15,9 @@ function sourceFileFor(file: string, text: string): ts.SourceFile {
     ? ts.ScriptKind.TSX
     : /\.jsx$/i.test(file)
       ? ts.ScriptKind.JSX
-      : ts.ScriptKind.TS;
+      : /\.(?:mjs|cjs|js)$/i.test(file)
+        ? ts.ScriptKind.JS
+        : ts.ScriptKind.TS;
   return ts.createSourceFile(file, text, ts.ScriptTarget.Latest, true, scriptKind);
 }
 
@@ -27,9 +29,32 @@ function collectImports(sourceFile: ts.SourceFile): RawImport[] {
 
   const visit = (node: ts.Node): void => {
     if (ts.isImportDeclaration(node) && ts.isStringLiteral(node.moduleSpecifier)) {
-      add(node.moduleSpecifier.text, "static", node.getStart(sourceFile), node.importClause?.isTypeOnly ?? false);
+      const clause = node.importClause;
+      const namedBindings = clause?.namedBindings;
+      const allNamedBindingsTypeOnly =
+        namedBindings &&
+        ts.isNamedImports(namedBindings) &&
+        namedBindings.elements.length > 0 &&
+        namedBindings.elements.every((element) => element.isTypeOnly);
+      add(
+        node.moduleSpecifier.text,
+        "static",
+        node.getStart(sourceFile),
+        clause?.isTypeOnly === true || allNamedBindingsTypeOnly === true,
+      );
     } else if (ts.isExportDeclaration(node) && node.moduleSpecifier && ts.isStringLiteral(node.moduleSpecifier)) {
-      add(node.moduleSpecifier.text, "export", node.getStart(sourceFile), false);
+      const exportClause = node.exportClause;
+      const allNamedExportsTypeOnly =
+        exportClause &&
+        ts.isNamedExports(exportClause) &&
+        exportClause.elements.length > 0 &&
+        exportClause.elements.every((element) => element.isTypeOnly);
+      add(
+        node.moduleSpecifier.text,
+        "export",
+        node.getStart(sourceFile),
+        node.isTypeOnly === true || allNamedExportsTypeOnly === true,
+      );
     } else if (ts.isCallExpression(node) && node.arguments.length === 1 && ts.isStringLiteral(node.arguments[0])) {
       if (node.expression.kind === ts.SyntaxKind.ImportKeyword)
         add(node.arguments[0].text, "dynamic", node.getStart(sourceFile));
@@ -60,31 +85,58 @@ function isAssetSpecifier(specifier: string): boolean {
   );
 }
 
+function isNodeModulesPath(file: string): boolean {
+  return file.split(path.sep).includes("node_modules");
+}
+
+function resolveModule(
+  project: DiscoveredProject,
+  specifier: string,
+  containingFile: string,
+): ts.ResolvedModule | undefined {
+  const cacheKey = `${containingFile}\0${specifier}`;
+  if (project.resolutionCache.has(cacheKey)) return project.resolutionCache.get(cacheKey);
+  const compilerOptions = project.compilerOptionsByFile.get(containingFile) ?? project.compilerOptions;
+  const resolved = ts.resolveModuleName(specifier, containingFile, compilerOptions, ts.sys).resolvedModule;
+  project.resolutionCache.set(cacheKey, resolved);
+  return resolved;
+}
+
 export function collectEdges(project: DiscoveredProject): SourceImport[] {
   const projectFiles = new Set(project.files.map((file) => path.normalize(file)));
   const edges: SourceImport[] = [];
 
   for (const file of project.files) {
-    const text = ts.sys.readFile(file) ?? "";
+    const text = project.fileContents.get(file) ?? "";
     const sourceFile = sourceFileFor(file, text);
     const imports = collectImports(sourceFile);
     const occurrences = new Map<string, number>();
     for (const current of imports) {
-      const resolved = ts.resolveModuleName(current.specifier, file, project.compilerOptions, ts.sys).resolvedModule;
+      const resolved = resolveModule(project, current.specifier, file);
       const resolvedFile = resolved ? path.normalize(resolved.resolvedFileName) : undefined;
       const internal = resolvedFile !== undefined && projectFiles.has(resolvedFile);
       const asset =
         isAssetSpecifier(current.specifier) || (resolvedFile !== undefined && isAssetSpecifier(resolvedFile));
+      const outOfScope =
+        resolvedFile !== undefined && !internal && isLocalLike(current.specifier) && !isNodeModulesPath(resolvedFile);
       const resolution = internal
         ? "internal"
         : asset
           ? "asset"
-          : resolvedFile || isBuiltin(current.specifier) || !isLocalLike(current.specifier)
-            ? "external"
-            : "unresolved";
+          : outOfScope
+            ? "out-of-scope"
+            : resolvedFile || isBuiltin(current.specifier) || !isLocalLike(current.specifier)
+              ? "external"
+              : "unresolved";
+      const resolutionConfidence =
+        resolvedFile !== undefined || isBuiltin(current.specifier)
+          ? "exact"
+          : isLocalLike(current.specifier)
+            ? "ambiguous"
+            : "syntactic";
       const location = sourceFile.getLineAndCharacterOfPosition(current.position);
       const fromFile = relativeToRoot(project.root, file);
-      const toFile = internal ? relativeToRoot(project.root, resolvedFile!) : undefined;
+      const toFile = internal || outOfScope ? relativeToRoot(project.root, resolvedFile!) : undefined;
       const occurrenceKey = [
         fromFile,
         toFile ?? "",
@@ -101,6 +153,7 @@ export function collectEdges(project: DiscoveredProject): SourceImport[] {
         specifier: current.specifier,
         importKind: current.kind,
         resolution,
+        resolutionConfidence,
         typeOnly: current.typeOnly,
         location: { line: location.line + 1, column: location.character + 1 },
         provenance: {

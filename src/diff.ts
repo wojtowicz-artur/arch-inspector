@@ -64,9 +64,14 @@ export interface ArchitectureDiff {
   hasRegressions: boolean;
 }
 
-function diffCollection<T>(before: T[], after: T[], key: (value: T) => string): CollectionDiff<T> {
+function diffCollection<T>(
+  before: T[],
+  after: T[],
+  key: (value: T) => string,
+  afterKey: (value: T) => string = key,
+): CollectionDiff<T> {
   const beforeMap = new Map(before.map((value) => [key(value), value]));
-  const afterMap = new Map(after.map((value) => [key(value), value]));
+  const afterMap = new Map(after.map((value) => [afterKey(value), value]));
   return {
     added: [...afterMap.entries()]
       .filter(([entryKey]) => !beforeMap.has(entryKey))
@@ -96,16 +101,36 @@ function metricDeltas(before: ArchitectureSnapshot, after: ArchitectureSnapshot)
     "externalImports",
     "assetImports",
     "unresolvedImports",
+    "outOfScopeImports",
     "moduleEdges",
     "cycles",
     "deepImports",
   ] as const;
   for (const key of keys) {
-    const beforeValue = before.analysis.metrics[key];
-    const afterValue = after.analysis.metrics[key];
+    const beforeValue = before.analysis.metrics[key] ?? 0;
+    const afterValue = after.analysis.metrics[key] ?? 0;
     result[key] = { before: beforeValue, after: afterValue, delta: afterValue - beforeValue };
   }
   return result;
+}
+
+function stableModuleKey(module: ArchitectureModule): string {
+  return module.stableId ?? module.root ?? module.id;
+}
+
+function moduleKeyMap(snapshot: ArchitectureSnapshot): Map<string, string> {
+  return new Map(snapshot.architecture.modules.map((module) => [module.id, stableModuleKey(module)]));
+}
+
+function stableEdgeKey(edge: ModuleEdge, modules: Map<string, string>): string {
+  return `${modules.get(edge.from) ?? edge.from}\0${modules.get(edge.to) ?? edge.to}`;
+}
+
+function stableCycleKey(cycle: ArchitectureCycle, modules: Map<string, string>): string {
+  return cycle.modules
+    .map((module) => modules.get(module) ?? module)
+    .sort(compare)
+    .join("\0");
 }
 
 function comparabilityReasons(before: ArchitectureSnapshot, after: ArchitectureSnapshot): string[] {
@@ -128,16 +153,29 @@ export function diffSnapshots(
   const reasons = comparabilityReasons(before, after);
   if (reasons.length > 0) throw new SnapshotComparisonError(reasons);
 
-  const modules = diffCollection(before.architecture.modules, after.architecture.modules, (module) => module.id);
+  const beforeModuleKeys = moduleKeyMap(before);
+  const afterModuleKeys = moduleKeyMap(after);
+  const modules = diffCollection(
+    before.architecture.modules,
+    after.architecture.modules,
+    stableModuleKey,
+    stableModuleKey,
+  );
   const ownership = diffCollection(before.architecture.ownership, after.architecture.ownership, (entry) => entry.file);
   const files = diffCollection(before.source.files, after.source.files, (file) => file.path);
   const imports = diffCollection(before.source.imports, after.source.imports, (edge) => edge.id);
   const moduleEdges = diffCollection(
     before.architecture.moduleEdges,
     after.architecture.moduleEdges,
-    (edge) => edge.id,
+    (edge) => stableEdgeKey(edge, beforeModuleKeys),
+    (edge) => stableEdgeKey(edge, afterModuleKeys),
   );
-  const cycles = diffCollection(before.analysis.cycles, after.analysis.cycles, (cycle) => cycle.id);
+  const cycles = diffCollection(
+    before.analysis.cycles,
+    after.analysis.cycles,
+    (cycle) => stableCycleKey(cycle, beforeModuleKeys),
+    (cycle) => stableCycleKey(cycle, afterModuleKeys),
+  );
   const findings = diffCollection(before.analysis.findings, after.analysis.findings, findingKey);
   const introducedViolations = findings.added
     .filter((finding) => finding.category === "violation")

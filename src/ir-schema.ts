@@ -39,7 +39,8 @@ const sourceImportSchema = z
     toFile: z.string().optional(),
     specifier: z.string(),
     importKind: z.enum(["static", "export", "dynamic", "require"]),
-    resolution: z.enum(["internal", "external", "asset", "unresolved"]),
+    resolution: z.enum(["internal", "external", "asset", "unresolved", "out-of-scope"]),
+    resolutionConfidence: z.enum(["exact", "syntactic", "ambiguous"]).optional(),
     typeOnly: z.boolean(),
     location: z
       .object({
@@ -54,6 +55,7 @@ const sourceImportSchema = z
 const architectureModuleSchema = z
   .object({
     id: z.string(),
+    stableId: z.string().optional(),
     root: z.string(),
     files: z.array(z.string()),
     entrypoints: z.array(z.string()),
@@ -102,6 +104,7 @@ const architectureMetricsSchema = z
     externalImports: z.number().int().nonnegative(),
     assetImports: z.number().int().nonnegative(),
     unresolvedImports: z.number().int().nonnegative(),
+    outOfScopeImports: z.number().int().nonnegative().optional(),
     moduleEdges: z.number().int().nonnegative(),
     cycles: z.number().int().nonnegative(),
     deepImports: z.number().int().nonnegative(),

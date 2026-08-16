@@ -1,6 +1,9 @@
 import assert from "node:assert/strict";
+import fs from "node:fs";
+import path from "node:path";
 import test from "node:test";
 import { analyzeProject } from "../src/analyzer.js";
+import { diffSnapshots } from "../src/diff.js";
 import {
   createCollidingModulesProject,
   createProject,
@@ -107,6 +110,82 @@ test("namespaces colliding inferred module ids by root", () => {
       "modules/auth",
     );
     assert.equal(snapshot.architecture.ownership.find((entry) => entry.file === "src/app.ts")?.module, "src");
+  } finally {
+    project.cleanup();
+  }
+});
+
+test("keeps module identity stable when a later module introduces a name collision", () => {
+  const project = createProject({
+    files: {
+      "src/modules/auth/index.ts": "export const auth = true;\n",
+      "src/app.ts": "export const app = true;\n",
+    },
+  });
+  try {
+    const before = analyzeProject(project.root);
+    fs.mkdirSync(path.join(project.root, "src/features/auth"), { recursive: true });
+    fs.writeFileSync(
+      path.join(project.root, "src/features/auth/index.ts"),
+      "export const featureAuth = true;\n",
+      "utf8",
+    );
+    const after = analyzeProject(project.root);
+    const diff = diffSnapshots(before, after);
+
+    assert.equal(
+      before.architecture.modules.find((module) => module.root === "src/modules/auth")?.stableId,
+      "src/modules/auth",
+    );
+    assert.equal(
+      after.architecture.modules.find((module) => module.root === "src/modules/auth")?.stableId,
+      "src/modules/auth",
+    );
+    assert.equal(
+      diff.architecture.modules.removed.some((module) => module.root === "src/modules/auth"),
+      false,
+    );
+    assert.deepEqual(
+      diff.architecture.modules.added.map((module) => module.root),
+      ["src/features/auth"],
+    );
+  } finally {
+    project.cleanup();
+  }
+});
+
+test("preserves type-only import and export semantics", () => {
+  const project = createProject({
+    files: {
+      "src/a.ts": 'import { type Value } from "./b";\nexport const value: Value = { id: "a" };\n',
+      "src/c.ts": 'export type { Value } from "./b";\n',
+      "src/b.ts": "export type Value = { id: string };\n",
+    },
+  });
+  try {
+    const imports = analyzeProject(project.root).source.imports;
+    assert.equal(imports.find((edge) => edge.fromFile === "src/a.ts")?.typeOnly, true);
+    assert.equal(imports.find((edge) => edge.fromFile === "src/c.ts")?.typeOnly, true);
+  } finally {
+    project.cleanup();
+  }
+});
+
+test("distinguishes a resolved local file outside the configured analysis scope", () => {
+  const project = createProject({
+    include: ["src/a.ts"],
+    files: {
+      "src/a.ts": 'import { hidden } from "./hidden";\nexport const value = hidden;\n',
+      "src/hidden.ts": "export const hidden = true;\n",
+    },
+  });
+  try {
+    const snapshot = analyzeProject(project.root);
+    const edge = snapshot.source.imports.find((candidate) => candidate.fromFile === "src/a.ts");
+    assert.equal(edge?.resolution, "out-of-scope");
+    assert.equal(edge?.toFile, "src/hidden.ts");
+    assert.equal(snapshot.analysis.metrics.outOfScopeImports, 1);
+    assert.ok(snapshot.analysis.findings.some((finding) => finding.code === "architecture/out-of-scope-import"));
   } finally {
     project.cleanup();
   }

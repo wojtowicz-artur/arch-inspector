@@ -9,10 +9,11 @@ Inspector nie wymaga adnotacji w analizowanym kodzie. Czyta istniejące `tsconfi
 - automatyczne moduły na podstawie `src/modules`, `src/features`, `src/app`, `src/shared` lub konfiguracji; kolizyjne nazwy są namespacowane względną ścieżką, np. `features/auth` i `modules/auth`;
 - import graph z obsługą aliasów `paths`, barrel files i package resolution;
 - importy static, export-from, dynamic `import()` i proste `require()`;
-- rozróżnienie importów internal/external/unresolved oraz type-only;
+- rozróżnienie importów internal/external/unresolved/out-of-scope oraz type-only;
 - module graph, cykle, fan-in/fan-out;
 - wykrywanie deep imports względem `index.ts` modułu;
-- deterministyczny JSON z wersjonowanym `irVersion` i snapshot receipt;
+- deterministyczny JSON z wersjonowanym `irVersion` i snapshot receipt; moduły mają
+  także `stableId` wyprowadzony z korzenia, niezależny od kompaktowej nazwy `id`;
 - deklaratywny katalog reguł `noCycles`, `noDeepImports` i jawnych zakazanych zależności.
 
 Snapshot ma trzy warstwy:
@@ -136,7 +137,7 @@ Reguła musi wskazywać znaną kolekcję (`cycles`, `imports`,
 kolizje; `relative-path` używa ścieżek względnych dla wszystkich modułów
 inferowanych. Jawnie zadeklarowane moduły zawsze zachowują skonfigurowane ID.
 
-Domyślnie inspector pomija artefakty `node_modules`, `.next`, `dist`, `build`, `coverage`, `.turbo` i `.cache`. `include` oraz `exclude` odnoszą się do ścieżek względnych względem katalogu z `tsconfig.json`. `modules` pozwala opisać moduły, które nie mają fizycznego `index.ts`. Importy CSS/SCSS, obrazów i fontów są raportowane jako `asset`, a nie jako błędne `unresolved`.
+Domyślnie inspector pomija artefakty `node_modules`, `.next`, `dist`, `build`, `coverage`, `.turbo` i `.cache`. `include` oraz `exclude` odnoszą się do ścieżek względnych względem katalogu z `tsconfig.json`. `modules` pozwala opisać moduły, które nie mają fizycznego `index.ts`. Importy CSS/SCSS, obrazów i fontów są raportowane jako `asset`, a nie jako błędne `unresolved`. Import lokalny rozwiązany do pliku wyłączonego przez `include`/`exclude` ma stan `out-of-scope` i zachowuje `toFile`, dzięki czemu brak krawędzi nie jest mylony z brakiem pliku.
 
 To jeszcze nie jest framework ani pełny system kontraktów. IR jest granicą, za którą można później wymienić analyzer, dodać diff Git i jawne deklaracje modułów bez zmiany konsumentów danych.
 

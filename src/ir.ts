@@ -7,7 +7,8 @@ export const IR_CONTRACT = {
   receipt: "required",
 } as const;
 
-export type Resolution = "internal" | "external" | "asset" | "unresolved";
+export type Resolution = "internal" | "external" | "asset" | "unresolved" | "out-of-scope";
+export type ResolutionConfidence = "exact" | "syntactic" | "ambiguous";
 export type ImportKind = "static" | "export" | "dynamic" | "require";
 export type DiagnosticLevel = "error" | "warning" | "info";
 export type DiagnosticCategory = "violation" | "observation";
@@ -61,6 +62,8 @@ export interface SourceImport {
   specifier: string;
   importKind: ImportKind;
   resolution: Resolution;
+  /** Whether the resolver proved the target or the classification is heuristic. */
+  resolutionConfidence?: ResolutionConfidence;
   typeOnly: boolean;
   location: {
     line: number;
@@ -77,6 +80,8 @@ export interface SourceFacts {
 
 export interface ArchitectureModule {
   id: string;
+  /** Stable identity derived from the module root; `id` remains the display/policy name. */
+  stableId?: string;
   root: string;
   files: string[];
   entrypoints: string[];
@@ -124,6 +129,8 @@ export interface ArchitectureMetrics {
   externalImports: number;
   assetImports: number;
   unresolvedImports: number;
+  /** Imports resolved to a local file excluded from the analysis scope. */
+  outOfScopeImports?: number;
   moduleEdges: number;
   cycles: number;
   deepImports: number;
