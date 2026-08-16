@@ -6,7 +6,7 @@ Pierwszy eksperymentalny slice toolingu do obserwowania ewolucji architektury Ty
 
 Inspector nie wymaga adnotacji w analizowanym kodzie. Czyta istniejące `tsconfig.json`, wykorzystuje TypeScript Compiler API do rozwiązywania importów i emituje deterministyczny Architecture IR:
 
-- automatyczne moduły na podstawie `src/modules`, `src/features`, `src/app`, `src/shared` lub konfiguracji;
+- automatyczne moduły na podstawie `src/modules`, `src/features`, `src/app`, `src/shared` lub konfiguracji; kolizyjne nazwy są namespacowane względną ścieżką, np. `features/auth` i `modules/auth`;
 - import graph z obsługą aliasów `paths`, barrel files i package resolution;
 - importy static, export-from, dynamic `import()` i proste `require()`;
 - rozróżnienie importów internal/external/unresolved oraz type-only;

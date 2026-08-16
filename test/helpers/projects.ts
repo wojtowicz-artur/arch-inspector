@@ -94,3 +94,13 @@ export function createScopedProject(): TemporaryProject {
     },
   });
 }
+
+export function createCollidingModulesProject(): TemporaryProject {
+  return createProject({
+    files: {
+      "src/modules/auth/index.ts": "export const modulesAuth = true;\n",
+      "src/features/auth/index.ts": "export const featuresAuth = true;\n",
+      "src/app.ts": "export const app = true;\n",
+    },
+  });
+}

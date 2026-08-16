@@ -1,7 +1,7 @@
 import assert from "node:assert/strict";
 import test from "node:test";
 import { analyzeProject } from "../src/analyzer.js";
-import { createSampleProject, createScopedProject } from "./helpers/projects.js";
+import { createCollidingModulesProject, createSampleProject, createScopedProject } from "./helpers/projects.js";
 
 test("builds a deterministic architecture snapshot from a TypeScript project", () => {
   const project = createSampleProject();
@@ -79,6 +79,29 @@ test("applies analysis scope and configured public entrypoints", () => {
       snapshot.architecture.ownership.find((entry) => entry.file.endsWith("booking/internal.ts"))?.module,
       "booking",
     );
+  } finally {
+    project.cleanup();
+  }
+});
+
+test("namespaces colliding inferred module ids by root", () => {
+  const project = createCollidingModulesProject();
+  try {
+    const snapshot = analyzeProject(project.root);
+
+    assert.deepEqual(
+      snapshot.architecture.modules.map((module) => module.id),
+      ["features/auth", "modules/auth", "src"],
+    );
+    assert.equal(
+      snapshot.architecture.ownership.find((entry) => entry.file === "src/features/auth/index.ts")?.module,
+      "features/auth",
+    );
+    assert.equal(
+      snapshot.architecture.ownership.find((entry) => entry.file === "src/modules/auth/index.ts")?.module,
+      "modules/auth",
+    );
+    assert.equal(snapshot.architecture.ownership.find((entry) => entry.file === "src/app.ts")?.module, "src");
   } finally {
     project.cleanup();
   }
