@@ -5,13 +5,22 @@ export function buildModuleEdges(edges: ArchitectureEdge[]): ModuleEdge[] {
   for (const edge of edges) {
     if (edge.resolution !== "internal" || !edge.toModule || edge.fromModule === edge.toModule) continue;
     const key = `${edge.fromModule}\0${edge.toModule}`;
-    const current = grouped.get(key) ?? { from: edge.fromModule, to: edge.toModule, imports: 0, publicApiImports: 0, files: [], provenance: { origin: "derived" as const } };
+    const current = grouped.get(key) ?? {
+      from: edge.fromModule,
+      to: edge.toModule,
+      imports: 0,
+      publicApiImports: 0,
+      files: [],
+      provenance: { origin: "derived" as const },
+    };
     current.imports += 1;
     if (edge.publicApi) current.publicApiImports += 1;
     if (!current.files.includes(edge.fromFile)) current.files.push(edge.fromFile);
     grouped.set(key, current);
   }
-  return [...grouped.values()].map((edge) => ({ ...edge, files: edge.files.sort() })).sort((a, b) => `${a.from}:${a.to}`.localeCompare(`${b.from}:${b.to}`));
+  return [...grouped.values()]
+    .map((edge) => ({ ...edge, files: edge.files.sort() }))
+    .sort((a, b) => `${a.from}:${a.to}`.localeCompare(`${b.from}:${b.to}`));
 }
 
 export function findCycles(modules: ArchitectureModule[], moduleEdges: ModuleEdge[]): string[][] {
@@ -57,7 +66,7 @@ export function findCycles(modules: ArchitectureModule[], moduleEdges: ModuleEdg
 }
 
 function dotString(value: string): string {
-  return `"${value.replaceAll("\\", "\\\\").replaceAll("\"", '\\"').replaceAll("\n", "\\n")}"`;
+  return `"${value.replaceAll("\\", "\\\\").replaceAll('"', '\\"').replaceAll("\n", "\\n")}"`;
 }
 
 /**
@@ -73,22 +82,27 @@ export function renderModuleGraphDot(snapshot: Pick<ArchitectureSnapshot, "archi
   const lines = [
     "digraph architecture {",
     "  rankdir=LR;",
-    "  graph [fontname=\"sans-serif\", bgcolor=\"transparent\"];",
-    "  node [shape=box, fontname=\"sans-serif\"];",
-    "  edge [fontname=\"sans-serif\"];",
+    '  graph [fontname="sans-serif", bgcolor="transparent"];',
+    '  node [shape=box, fontname="sans-serif"];',
+    '  edge [fontname="sans-serif"];',
   ];
 
   for (const module of [...modules].sort((a, b) => a.id.localeCompare(b.id))) {
-    const attributes = [`label=${dotString(`${module.id}\n${module.files.length} file${module.files.length === 1 ? "" : "s"}`)}`];
+    const attributes = [
+      `label=${dotString(`${module.id}\n${module.files.length} file${module.files.length === 1 ? "" : "s"}`)}`,
+    ];
     if (cycleModules.has(module.id)) {
-      attributes.push("color=\"#dc2626\"", "penwidth=\"2\"");
+      attributes.push('color="#dc2626"', 'penwidth="2"');
     }
     lines.push(`  ${dotString(module.id)} [${attributes.join(", ")}];`);
   }
 
   for (const edge of [...moduleEdges].sort((a, b) => `${a.from}\0${a.to}`.localeCompare(`${b.from}\0${b.to}`))) {
-    const publicApi = edge.publicApiImports === edge.imports ? "public API" : `${edge.publicApiImports}/${edge.imports} public API`;
-    lines.push(`  ${dotString(edge.from)} -> ${dotString(edge.to)} [label=${dotString(`${edge.imports} (${publicApi})`)}];`);
+    const publicApi =
+      edge.publicApiImports === edge.imports ? "public API" : `${edge.publicApiImports}/${edge.imports} public API`;
+    lines.push(
+      `  ${dotString(edge.from)} -> ${dotString(edge.to)} [label=${dotString(`${edge.imports} (${publicApi})`)}];`,
+    );
   }
 
   lines.push("}");

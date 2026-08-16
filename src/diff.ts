@@ -46,11 +46,7 @@ function compare(a: string, b: string): number {
   return a.localeCompare(b);
 }
 
-function diffCollection<T>(
-  before: T[],
-  after: T[],
-  key: (value: T) => string,
-): CollectionDiff<T> {
+function diffCollection<T>(before: T[], after: T[], key: (value: T) => string): CollectionDiff<T> {
   const beforeMap = new Map(before.map((value) => [key(value), value]));
   const afterMap = new Map(after.map((value) => [key(value), value]));
   return {
@@ -63,7 +59,10 @@ function diffCollection<T>(
       .sort(([a], [b]) => compare(a, b))
       .map(([, value]) => value),
     changed: [...afterMap.entries()]
-      .filter(([entryKey, value]) => beforeMap.has(entryKey) && JSON.stringify(beforeMap.get(entryKey)) !== JSON.stringify(value))
+      .filter(
+        ([entryKey, value]) =>
+          beforeMap.has(entryKey) && JSON.stringify(beforeMap.get(entryKey)) !== JSON.stringify(value),
+      )
       .sort(([a], [b]) => compare(a, b))
       .map(([entryKey, value]) => ({ before: beforeMap.get(entryKey)!, after: value })),
   };
@@ -125,7 +124,11 @@ export function diffSnapshots(
   const modules = diffCollection(before.architecture.modules, after.architecture.modules, (module) => module.id);
   const files = diffCollection(before.source.files, after.source.files, (file) => file.path);
   const edges = diffCollection(before.source.edges, after.source.edges, edgeKey);
-  const moduleEdges = diffCollection(before.architecture.moduleEdges, after.architecture.moduleEdges, (edge) => `${edge.from}\0${edge.to}`);
+  const moduleEdges = diffCollection(
+    before.architecture.moduleEdges,
+    after.architecture.moduleEdges,
+    (edge) => `${edge.from}\0${edge.to}`,
+  );
   const cycles = diffCollection(before.architecture.cycles, after.architecture.cycles, cycleKey);
   const diagnostics = diffCollection(before.architecture.diagnostics, after.architecture.diagnostics, diagnosticKey);
   const introducedViolations = diagnostics.added
@@ -153,7 +156,7 @@ export function loadSnapshot(filePath: string): ArchitectureSnapshot {
     parsed = JSON.parse(fs.readFileSync(filePath, "utf8")) as unknown;
   } catch (error) {
     const reason = error instanceof Error ? ` ${error.message}` : "";
-    throw new Error(`Could not read architecture snapshot '${filePath}'.${reason}`);
+    throw new Error(`Could not read architecture snapshot '${filePath}'.${reason}`, { cause: error });
   }
   if (!isArchitectureSnapshot(parsed)) {
     throw new Error(`'${filePath}' is not an Architecture IR ${IR_VERSION} snapshot.`);
@@ -177,7 +180,22 @@ function isArchitectureSnapshot(value: unknown): value is ArchitectureSnapshot {
   if (!isRecord(source) || !isRecord(architecture)) return false;
   if (!hasProvenance(source.provenance) || !hasProvenance(architecture.provenance)) return false;
   if (!Array.isArray(source.files) || !Array.isArray(source.edges)) return false;
-  if (!Array.isArray(architecture.modules) || !Array.isArray(architecture.moduleEdges) || !Array.isArray(architecture.cycles) || !Array.isArray(architecture.diagnostics) || !isRecord(architecture.metrics)) return false;
-  const facts = [...source.files, ...source.edges, ...architecture.modules, ...architecture.moduleEdges, ...architecture.cycles, ...architecture.diagnostics, architecture.metrics];
+  if (
+    !Array.isArray(architecture.modules) ||
+    !Array.isArray(architecture.moduleEdges) ||
+    !Array.isArray(architecture.cycles) ||
+    !Array.isArray(architecture.diagnostics) ||
+    !isRecord(architecture.metrics)
+  )
+    return false;
+  const facts = [
+    ...source.files,
+    ...source.edges,
+    ...architecture.modules,
+    ...architecture.moduleEdges,
+    ...architecture.cycles,
+    ...architecture.diagnostics,
+    architecture.metrics,
+  ];
   return facts.every((fact) => isRecord(fact) && hasProvenance(fact.provenance));
 }

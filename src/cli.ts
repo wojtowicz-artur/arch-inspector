@@ -29,7 +29,8 @@ interface ParsedArgs {
 
 function parseArgs(args: string[]): ParsedArgs {
   const command = args[0] ?? "inspect";
-  if (!["inspect", "graph", "check", "diff", "help", "--help", "-h"].includes(command)) throw new Error(`Unknown command '${command}'.\n\n${usage()}`);
+  if (!["inspect", "graph", "check", "diff", "help", "--help", "-h"].includes(command))
+    throw new Error(`Unknown command '${command}'.\n\n${usage()}`);
   const positional: string[] = [];
   let out: string | undefined;
   for (let index = 1; index < args.length; index += 1) {
@@ -51,7 +52,13 @@ function parseArgs(args: string[]): ParsedArgs {
       ...(out ? { out } : {}),
     };
   }
-  return { command, project: positional[0] ?? ".", json: args.includes("--json"), check: false, ...(out ? { out } : {}) };
+  return {
+    command,
+    project: positional[0] ?? ".",
+    json: args.includes("--json"),
+    check: false,
+    ...(out ? { out } : {}),
+  };
 }
 
 function renderText(snapshot: ArchitectureSnapshot): string {
@@ -96,19 +103,52 @@ function renderDiff(diff: ArchitectureDiff): string {
     for (const value of removed) lines.push(`- ${value}`);
     for (const value of changed) lines.push(`~ ${value}`);
   };
-  section("Modules", diff.architecture.modules.added.map((module) => module.id), diff.architecture.modules.removed.map((module) => module.id), diff.architecture.modules.changed.map(({ after }) => `${after.id} changed`));
-  section("Files", diff.source.files.added.map((file) => `${file.path} [${file.moduleId}]`), diff.source.files.removed.map((file) => `${file.path} [${file.moduleId}]`), diff.source.files.changed.map(({ after }) => `${after.path} changed`));
-  section("Module edges", diff.architecture.moduleEdges.added.map((edge) => `${edge.from} → ${edge.to}`), diff.architecture.moduleEdges.removed.map((edge) => `${edge.from} → ${edge.to}`), diff.architecture.moduleEdges.changed.map(({ after }) => `${after.from} → ${after.to} changed`));
-  section("Import edges", diff.source.edges.added.map(shortEdge), diff.source.edges.removed.map(shortEdge), diff.source.edges.changed.map(({ after }) => `${shortEdge(after)} changed`));
-  section("Cycles", diff.architecture.cycles.added.map((cycle) => `${cycle.modules.join(" → ")} → ${cycle.modules[0]}`), diff.architecture.cycles.removed.map((cycle) => `${cycle.modules.join(" → ")} → ${cycle.modules[0]}`));
-  section("Diagnostics", diff.architecture.diagnostics.added.map(shortDiagnostic), diff.architecture.diagnostics.removed.map(shortDiagnostic), diff.architecture.diagnostics.changed.map(({ after }) => `${shortDiagnostic(after)} changed`));
+  section(
+    "Modules",
+    diff.architecture.modules.added.map((module) => module.id),
+    diff.architecture.modules.removed.map((module) => module.id),
+    diff.architecture.modules.changed.map(({ after }) => `${after.id} changed`),
+  );
+  section(
+    "Files",
+    diff.source.files.added.map((file) => `${file.path} [${file.moduleId}]`),
+    diff.source.files.removed.map((file) => `${file.path} [${file.moduleId}]`),
+    diff.source.files.changed.map(({ after }) => `${after.path} changed`),
+  );
+  section(
+    "Module edges",
+    diff.architecture.moduleEdges.added.map((edge) => `${edge.from} → ${edge.to}`),
+    diff.architecture.moduleEdges.removed.map((edge) => `${edge.from} → ${edge.to}`),
+    diff.architecture.moduleEdges.changed.map(({ after }) => `${after.from} → ${after.to} changed`),
+  );
+  section(
+    "Import edges",
+    diff.source.edges.added.map(shortEdge),
+    diff.source.edges.removed.map(shortEdge),
+    diff.source.edges.changed.map(({ after }) => `${shortEdge(after)} changed`),
+  );
+  section(
+    "Cycles",
+    diff.architecture.cycles.added.map((cycle) => `${cycle.modules.join(" → ")} → ${cycle.modules[0]}`),
+    diff.architecture.cycles.removed.map((cycle) => `${cycle.modules.join(" → ")} → ${cycle.modules[0]}`),
+  );
+  section(
+    "Diagnostics",
+    diff.architecture.diagnostics.added.map(shortDiagnostic),
+    diff.architecture.diagnostics.removed.map(shortDiagnostic),
+    diff.architecture.diagnostics.changed.map(({ after }) => `${shortDiagnostic(after)} changed`),
+  );
 
   const changedMetrics = Object.entries(diff.architecture.metrics).filter(([, metric]) => metric.delta !== 0);
   if (changedMetrics.length > 0) {
     lines.push("", "Metrics:");
-    for (const [name, metric] of changedMetrics) lines.push(`- ${name}: ${metric.before} → ${metric.after} (${metric.delta > 0 ? "+" : ""}${metric.delta})`);
+    for (const [name, metric] of changedMetrics)
+      lines.push(`- ${name}: ${metric.before} → ${metric.after} (${metric.delta > 0 ? "+" : ""}${metric.delta})`);
   }
-  lines.push("", diff.hasRegressions ? "Result: regressions introduced" : "Result: no introduced architecture violations");
+  lines.push(
+    "",
+    diff.hasRegressions ? "Result: regressions introduced" : "Result: no introduced architecture violations",
+  );
   return lines.join("\n");
 }
 
@@ -120,9 +160,10 @@ function diffProject(parsed: ParsedArgs): ArchitectureDiff {
   const projectPath = path.resolve(parsed.project);
   const current = inspectSnapshot(projectPath);
   const basePath = path.resolve(parsed.base!);
-  const base = fs.existsSync(basePath) && fs.statSync(basePath).isFile()
-    ? loadSnapshot(basePath)
-    : analyzeGitRef(parsed.base!, projectPath);
+  const base =
+    fs.existsSync(basePath) && fs.statSync(basePath).isFile()
+      ? loadSnapshot(basePath)
+      : analyzeGitRef(parsed.base!, projectPath);
   return diffSnapshots(base, current, { base: parsed.base, current: "working tree" });
 }
 
@@ -144,16 +185,18 @@ function main(): void {
   const output = parsed.json
     ? `${JSON.stringify(snapshot, null, 2)}\n`
     : parsed.command === "graph"
-    ? renderModuleGraphDot(snapshot)
-    : `${renderText(snapshot)}\n`;
+      ? renderModuleGraphDot(snapshot)
+      : `${renderText(snapshot)}\n`;
   if (parsed.out) {
-    const fileContents = parsed.json || parsed.command !== "graph"
-      ? JSON.stringify(snapshot, null, 2) + "\n"
-      : output;
+    const fileContents = parsed.json || parsed.command !== "graph" ? JSON.stringify(snapshot, null, 2) + "\n" : output;
     fs.writeFileSync(path.resolve(parsed.out), fileContents, "utf8");
   }
   process.stdout.write(output);
-  if (parsed.command === "check" && snapshot.architecture.diagnostics.some((diagnostic) => diagnostic.category === "violation")) process.exitCode = 1;
+  if (
+    parsed.command === "check" &&
+    snapshot.architecture.diagnostics.some((diagnostic) => diagnostic.category === "violation")
+  )
+    process.exitCode = 1;
 }
 
 try {

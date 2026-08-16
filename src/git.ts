@@ -14,7 +14,7 @@ function gitRoot(projectPath: string): string {
     }).trim();
   } catch (error) {
     const reason = error instanceof Error ? ` ${error.message}` : "";
-    throw new Error(`Could not locate a Git repository from '${projectPath}'.${reason}`);
+    throw new Error(`Could not locate a Git repository from '${projectPath}'.${reason}`, { cause: error });
   }
 }
 
@@ -45,7 +45,7 @@ export function analyzeGitRef(ref: string, projectPath: string): ArchitectureSna
     return analyzeProject(extractedProject);
   } catch (error) {
     const reason = error instanceof Error ? error.message : String(error);
-    throw new Error(`Could not analyze Git ref '${ref}'. ${reason}`);
+    throw new Error(`Could not analyze Git ref '${ref}'. ${reason}`, { cause: error });
   } finally {
     fs.rmSync(temporaryRoot, { recursive: true, force: true });
   }

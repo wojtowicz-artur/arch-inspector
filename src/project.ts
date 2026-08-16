@@ -9,10 +9,13 @@ export interface InspectorConfig {
   exclude?: string[];
   moduleRoots?: string[];
   /** Explicit module declarations for projects whose boundaries are not folder-conventional. */
-  modules?: Record<string, {
-    root: string;
-    publicEntrypoints?: string[];
-  }>;
+  modules?: Record<
+    string,
+    {
+      root: string;
+      publicEntrypoints?: string[];
+    }
+  >;
   /** Maps inferred module ids to files which form their public API. */
   publicEntrypoints?: Record<string, string[]>;
   noCycles?: boolean;
@@ -39,9 +42,7 @@ function normalize(filePath: string): string {
 
 function findTsconfig(start: string): string {
   const initial = normalize(start);
-  let directory = fs.existsSync(initial) && fs.statSync(initial).isDirectory()
-    ? initial
-    : path.dirname(initial);
+  let directory = fs.existsSync(initial) && fs.statSync(initial).isDirectory() ? initial : path.dirname(initial);
 
   while (true) {
     const candidate = path.join(directory, "tsconfig.json");
@@ -155,16 +156,27 @@ export function discoverProject(inputPath = "."): DiscoveredProject {
     for (const reference of references) {
       if (!reference || typeof reference.path !== "string") continue;
       const referencePath = normalize(path.resolve(configRoot, reference.path));
-      const referenceConfig = fs.existsSync(referencePath) && fs.statSync(referencePath).isDirectory()
-        ? path.join(referencePath, "tsconfig.json")
-        : referencePath.endsWith(".json") ? referencePath : `${referencePath}.json`;
+      const referenceConfig =
+        fs.existsSync(referencePath) && fs.statSync(referencePath).isDirectory()
+          ? path.join(referencePath, "tsconfig.json")
+          : referencePath.endsWith(".json")
+            ? referencePath
+            : `${referencePath}.json`;
       if (fs.existsSync(referenceConfig)) readConfig(referenceConfig);
     }
   };
 
   readConfig(tsconfigPath);
   const files = filterProjectFiles(root, [...new Set(referencedFiles)].sort(), config);
-  const sourceRoot = normalize(compilerOptions.rootDir ?? path.join(root, files.some((file) => file.includes(`${path.sep}src${path.sep}`)) ? "src" : path.relative(root, commonDirectory(files))));
+  const sourceRoot = normalize(
+    compilerOptions.rootDir ??
+      path.join(
+        root,
+        files.some((file) => file.includes(`${path.sep}src${path.sep}`))
+          ? "src"
+          : path.relative(root, commonDirectory(files)),
+      ),
+  );
 
   return {
     root: normalize(root),

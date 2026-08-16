@@ -53,15 +53,13 @@ export function inferModules(project: DiscoveredProject): {
 
   for (const file of project.files) {
     const explicit = explicitModules.find((module) => isWithin(module.root, file));
-    const matchingRoots = configuredRoots
-      .filter((root) => isWithin(root, file))
-      .sort((a, b) => b.length - a.length);
+    const matchingRoots = configuredRoots.filter((root) => isWithin(root, file)).sort((a, b) => b.length - a.length);
     const selectedRoot = matchingRoots[0] ?? project.sourceRoot;
     const candidate = explicit
       ? { id: explicit.id, root: explicit.root }
       : matchingRoots.length === 0 && !isWithin(project.sourceRoot, file)
-      ? outsideSourceRootCandidate(project, file)
-      : candidateId(selectedRoot, file);
+        ? outsideSourceRootCandidate(project, file)
+        : candidateId(selectedRoot, file);
     const assignment = assignments.get(candidate.id) ?? candidate;
     assignments.set(candidate.id, assignment);
     moduleRoots.set(candidate.id, assignment.root);
@@ -87,7 +85,9 @@ export function inferModules(project: DiscoveredProject): {
       .filter((file) => path.basename(file).replace(/\.(?:tsx?|mts|cts|jsx?|mjs|cjs)$/i, "") === "index")
       .map((file) => relativeToRoot(project.root, file))
       .sort();
-    const configuredEntrypoints = (explicitModules.find((module) => module.id === id)?.publicEntrypoints ?? project.config.publicEntrypoints?.[id])
+    const configuredEntrypoints = (
+      explicitModules.find((module) => module.id === id)?.publicEntrypoints ?? project.config.publicEntrypoints?.[id]
+    )
       ?.map((file) => relativeToRoot(project.root, path.resolve(project.root, file)))
       .filter((file) => files.some((candidate) => relativeToRoot(project.root, candidate) === file))
       .sort();

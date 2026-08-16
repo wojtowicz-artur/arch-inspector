@@ -1,7 +1,7 @@
 import path from "node:path";
 import ts from "typescript";
 import type { ArchitectureEdge, ImportKind } from "./ir.js";
-import { isWithin, relativeToRoot, type DiscoveredProject } from "./project.js";
+import { relativeToRoot, type DiscoveredProject } from "./project.js";
 
 interface RawImport {
   specifier: string;
@@ -11,7 +11,11 @@ interface RawImport {
 }
 
 function sourceFileFor(file: string, text: string): ts.SourceFile {
-  const scriptKind = /\.tsx$/i.test(file) ? ts.ScriptKind.TSX : /\.jsx$/i.test(file) ? ts.ScriptKind.JSX : ts.ScriptKind.TS;
+  const scriptKind = /\.tsx$/i.test(file)
+    ? ts.ScriptKind.TSX
+    : /\.jsx$/i.test(file)
+      ? ts.ScriptKind.JSX
+      : ts.ScriptKind.TS;
   return ts.createSourceFile(file, text, ts.ScriptTarget.Latest, true, scriptKind);
 }
 
@@ -27,8 +31,10 @@ function collectImports(sourceFile: ts.SourceFile): RawImport[] {
     } else if (ts.isExportDeclaration(node) && node.moduleSpecifier && ts.isStringLiteral(node.moduleSpecifier)) {
       add(node.moduleSpecifier.text, "export", node.getStart(sourceFile), false);
     } else if (ts.isCallExpression(node) && node.arguments.length === 1 && ts.isStringLiteral(node.arguments[0])) {
-      if (node.expression.kind === ts.SyntaxKind.ImportKeyword) add(node.arguments[0].text, "dynamic", node.getStart(sourceFile));
-      else if (ts.isIdentifier(node.expression) && node.expression.text === "require") add(node.arguments[0].text, "require", node.getStart(sourceFile));
+      if (node.expression.kind === ts.SyntaxKind.ImportKeyword)
+        add(node.arguments[0].text, "dynamic", node.getStart(sourceFile));
+      else if (ts.isIdentifier(node.expression) && node.expression.text === "require")
+        add(node.arguments[0].text, "require", node.getStart(sourceFile));
     }
     ts.forEachChild(node, visit);
   };
@@ -37,7 +43,10 @@ function collectImports(sourceFile: ts.SourceFile): RawImport[] {
 }
 
 function isBuiltin(specifier: string): boolean {
-  return specifier.startsWith("node:") || ["fs", "path", "url", "util", "events", "assert", "crypto", "stream", "os", "http", "https"].includes(specifier);
+  return (
+    specifier.startsWith("node:") ||
+    ["fs", "path", "url", "util", "events", "assert", "crypto", "stream", "os", "http", "https"].includes(specifier)
+  );
 }
 
 function isLocalLike(specifier: string): boolean {
@@ -46,7 +55,9 @@ function isLocalLike(specifier: string): boolean {
 
 function isAssetSpecifier(specifier: string): boolean {
   const withoutQuery = specifier.split(/[?#]/, 1)[0].toLowerCase();
-  return /\.(?:css|scss|sass|less|styl|pcss|svg|png|jpe?g|gif|webp|avif|ico|woff2?|ttf|eot|mp4|webm|mp3|wav)$/.test(withoutQuery);
+  return /\.(?:css|scss|sass|less|styl|pcss|svg|png|jpe?g|gif|webp|avif|ico|woff2?|ttf|eot|mp4|webm|mp3|wav)$/.test(
+    withoutQuery,
+  );
 }
 
 export function collectEdges(
@@ -65,8 +76,15 @@ export function collectEdges(
       const resolved = ts.resolveModuleName(current.specifier, file, project.compilerOptions, ts.sys).resolvedModule;
       const resolvedFile = resolved ? path.normalize(resolved.resolvedFileName) : undefined;
       const internal = resolvedFile !== undefined && projectFiles.has(resolvedFile);
-      const asset = isAssetSpecifier(current.specifier) || (resolvedFile !== undefined && isAssetSpecifier(resolvedFile));
-      const resolution = internal ? "internal" : asset ? "asset" : resolvedFile || isBuiltin(current.specifier) || !isLocalLike(current.specifier) ? "external" : "unresolved";
+      const asset =
+        isAssetSpecifier(current.specifier) || (resolvedFile !== undefined && isAssetSpecifier(resolvedFile));
+      const resolution = internal
+        ? "internal"
+        : asset
+          ? "asset"
+          : resolvedFile || isBuiltin(current.specifier) || !isLocalLike(current.specifier)
+            ? "external"
+            : "unresolved";
       const fromModule = fileToModule.get(file)!;
       const toModule = internal ? fileToModule.get(resolvedFile!) : undefined;
       const targetEntrypoints = toModule ? moduleEntrypoints.get(toModule) : undefined;

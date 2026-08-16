@@ -13,24 +13,40 @@ test("diffs architecture snapshots by stable module, file, edge and diagnostic i
     const current = structuredClone(base);
     current.architecture.modules = current.architecture.modules.filter((module) => module.id !== "shared");
     current.source.files = current.source.files.filter((file) => file.moduleId !== "shared");
-    current.architecture.moduleEdges = [...current.architecture.moduleEdges, { from: "admin", to: "calendar", imports: 1, publicApiImports: 1, files: ["src/modules/admin/index.ts"], provenance: { origin: "derived" } }];
+    current.architecture.moduleEdges = [
+      ...current.architecture.moduleEdges,
+      {
+        from: "admin",
+        to: "calendar",
+        imports: 1,
+        publicApiImports: 1,
+        files: ["src/modules/admin/index.ts"],
+        provenance: { origin: "derived" },
+      },
+    ];
     current.architecture.metrics.modules -= 1;
     current.architecture.metrics.moduleEdges += 1;
     current.architecture.metrics.deepImports += 1;
-    current.architecture.diagnostics = [...current.architecture.diagnostics, {
-      code: "architecture/forbidden-dependency",
-      category: "violation",
-      level: "error",
-      message: "admin is not allowed to depend on calendar.",
-      file: "src/modules/admin/index.ts",
-      line: 1,
-      provenance: { origin: "derived" },
-    }];
+    current.architecture.diagnostics = [
+      ...current.architecture.diagnostics,
+      {
+        code: "architecture/forbidden-dependency",
+        category: "violation",
+        level: "error",
+        message: "admin is not allowed to depend on calendar.",
+        file: "src/modules/admin/index.ts",
+        line: 1,
+        provenance: { origin: "derived" },
+      },
+    ];
 
     const diff = diffSnapshots(base, current, { base: "main", current: "working tree" });
 
     assert.equal(diff.base, "main");
-    assert.deepEqual(diff.architecture.modules.removed.map((module) => module.id), ["shared"]);
+    assert.deepEqual(
+      diff.architecture.modules.removed.map((module) => module.id),
+      ["shared"],
+    );
     assert.equal(diff.architecture.moduleEdges.added[0].from, "admin");
     assert.equal(diff.introducedViolations[0].code, "architecture/forbidden-dependency");
     assert.equal(diff.architecture.metrics.modules.delta, -1);

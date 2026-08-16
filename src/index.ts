@@ -30,8 +30,4 @@ export type {
   SourceFacts,
 } from "./ir.js";
 
-export type {
-  ArchitectureDiff,
-  CollectionDiff,
-  MetricDelta,
-} from "./diff.js";
+export type { ArchitectureDiff, CollectionDiff, MetricDelta } from "./diff.js";

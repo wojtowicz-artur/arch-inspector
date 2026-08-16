@@ -20,12 +20,19 @@
     "build": "tsc -p tsconfig.json",
     "test": "npm run build && node --test dist/test/*.test.js",
     "inspect": "npm run build && node dist/src/cli.js inspect",
-    "check": "npm run build && node dist/src/cli.js check"
+    "check": "npm run build && node dist/src/cli.js check",
+    "format": "oxfmt src test",
+    "format:check": "oxfmt --check src test",
+    "lint": "oxlint src test",
+    "lint:fix": "oxlint --fix src test",
+    "quality": "npm run format:check && npm run lint && npm test"
   },
   "dependencies": {
     "typescript": "^5.8.3"
   },
   "devDependencies": {
-    "@types/node": "^22.15.3"
+    "@types/node": "^22.15.3",
+    "oxfmt": "^0.63.0",
+    "oxlint": "^1.78.0"
   }
 }

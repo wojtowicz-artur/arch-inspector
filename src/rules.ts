@@ -28,7 +28,10 @@ export function evaluateRules(
   }
 
   for (const edge of edges) {
-    if (edge.resolution === "unresolved" && (edge.specifier.startsWith(".") || edge.specifier.startsWith("/") || edge.specifier.startsWith("#"))) {
+    if (
+      edge.resolution === "unresolved" &&
+      (edge.specifier.startsWith(".") || edge.specifier.startsWith("/") || edge.specifier.startsWith("#"))
+    ) {
       diagnostics.push({
         code: "architecture/unresolved-import",
         category: "observation",
@@ -84,5 +87,12 @@ export function evaluateRules(
     }
   }
 
-  return diagnostics.sort((a, b) => (levelRank[a.level] - levelRank[b.level]) || a.code.localeCompare(b.code) || (a.file ?? "").localeCompare(b.file ?? "") || (a.line ?? 0) - (b.line ?? 0) || a.message.localeCompare(b.message));
+  return diagnostics.sort(
+    (a, b) =>
+      levelRank[a.level] - levelRank[b.level] ||
+      a.code.localeCompare(b.code) ||
+      (a.file ?? "").localeCompare(b.file ?? "") ||
+      (a.line ?? 0) - (b.line ?? 0) ||
+      a.message.localeCompare(b.message),
+  );
 }
