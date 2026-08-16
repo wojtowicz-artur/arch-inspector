@@ -114,14 +114,14 @@ export function analyzeProject(inputPath = "."): ArchitectureSnapshot {
   const imports = collectEdges(project);
   const moduleEdges = buildModuleEdges(imports, relativeFileToModule, moduleEntrypoints);
   const cycles = findCycles(inferred.modules, moduleEdges);
-  const findings: ArchitectureFinding[] = evaluateRules(
-    project.config,
-    inferred.modules,
+  const findings: ArchitectureFinding[] = evaluateRules({
+    config: project.config,
+    modules: inferred.modules,
     imports,
-    relativeFileToModule,
+    fileToModule: relativeFileToModule,
     moduleEntrypoints,
     cycles,
-  );
+  });
   const files = sourceFiles(project);
   const ownership = files.map((file) => ({
     file: file.path,

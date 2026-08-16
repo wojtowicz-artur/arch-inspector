@@ -10,6 +10,7 @@ export { analyzeGitRef } from "./git.js";
 export { diffSnapshots, loadSnapshot, SnapshotComparisonError } from "./diff.js";
 export { renderModuleGraphDot } from "./graph.js";
 export { IR_VERSION, TOOL_VERSION } from "./ir.js";
+export { BUILTIN_RULES, createRuleContext, evaluateRules } from "./rules.js";
 
 export type {
   AnalysisFacts,
@@ -36,3 +37,15 @@ export type {
 } from "./ir.js";
 
 export type { ArchitectureDiff, CollectionDiff, MetricDelta } from "./diff.js";
+export type {
+  RuleCondition,
+  RuleContext,
+  RuleFieldRef,
+  RuleFindingTemplate,
+  RuleInput,
+  RuleOperator,
+  RuleRecord,
+  RuleSpec,
+  RuleValue,
+} from "./rules.js";
+export type { InspectorConfig } from "./project.js";

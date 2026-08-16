@@ -13,7 +13,7 @@ Inspector nie wymaga adnotacji w analizowanym kodzie. Czyta istniejące `tsconfi
 - module graph, cykle, fan-in/fan-out;
 - wykrywanie deep imports względem `index.ts` modułu;
 - deterministyczny JSON z wersjonowanym `irVersion` i snapshot receipt;
-- reguły `noCycles`, `noDeepImports` i jawne zakazane zależności.
+- deklaratywny katalog reguł `noCycles`, `noDeepImports` i jawnych zakazanych zależności.
 
 Snapshot ma trzy warstwy:
 
@@ -100,6 +100,11 @@ Konfiguracja opcjonalna: `arch.config.json` w katalogu projektu:
   ]
 }
 ```
+
+Silnik reguł nie rozgałęzia się po kodach reguł. Reguły są specyfikacjami
+`RuleSpec`: wybierają kolekcję znormalizowanych faktów, nakładają predykaty i
+mapują rekord na finding. Katalog wbudowany można rozszerzyć programowo przez
+`evaluateRules(input, [...BUILTIN_RULES, customRule])`.
 
 Domyślnie inspector pomija artefakty `node_modules`, `.next`, `dist`, `build`, `coverage`, `.turbo` i `.cache`. `include` oraz `exclude` odnoszą się do ścieżek względnych względem katalogu z `tsconfig.json`. `modules` pozwala opisać moduły, które nie mają fizycznego `index.ts`. Importy CSS/SCSS, obrazów i fontów są raportowane jako `asset`, a nie jako błędne `unresolved`.
 

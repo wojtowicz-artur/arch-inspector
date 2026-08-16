@@ -1,132 +1,330 @@
-import type { ArchitectureCycle, ArchitectureFinding, ArchitectureModule, SourceImport } from "./ir.js";
+import type {
+  ArchitectureCycle,
+  ArchitectureFinding,
+  ArchitectureModule,
+  DiagnosticCategory,
+  DiagnosticLevel,
+  EvidenceRef,
+  SourceImport,
+} from "./ir.js";
 import type { InspectorConfig } from "./project.js";
 import { compare } from "./stable.js";
 
-const levelRank = { error: 0, warning: 1, info: 2 } as const;
-
-function evidenceForEdge(edge: SourceImport) {
-  return [{ kind: "source-edge" as const, id: edge.id, file: edge.fromFile, line: edge.location.line }];
+/** A normalized fact collection which can be consumed by a rule specification. */
+export interface RuleRecord {
+  data: Readonly<Record<string, unknown>>;
+  derivedFrom?: readonly string[];
+  evidence?: readonly EvidenceRef[];
 }
 
-function derivedProvenance(rule: string, derivedFrom: string[], evidence: ReturnType<typeof evidenceForEdge>) {
+export interface RuleContext {
+  /** Feature flags are populated from project policy, not interpreted by individual rules. */
+  flags: Readonly<Record<string, boolean>>;
+  collections: Readonly<Record<string, readonly RuleRecord[]>>;
+}
+
+export interface RuleInput {
+  config: InspectorConfig;
+  modules: ArchitectureModule[];
+  imports: SourceImport[];
+  fileToModule: Map<string, string>;
+  moduleEntrypoints: Map<string, Set<string>>;
+  cycles: ArchitectureCycle[];
+}
+
+export interface RuleFieldRef {
+  field: string;
+}
+
+export type RuleValue = string | number | boolean | null | RuleFieldRef;
+
+export type RuleOperator = "eq" | "neq" | "truthy" | "falsy" | "startsWith" | "includes" | "gt" | "gte" | "lt" | "lte";
+
+export interface RuleCondition {
+  field: string;
+  operator: RuleOperator;
+  value?: RuleValue;
+}
+
+export interface RuleFindingTemplate {
+  category: DiagnosticCategory;
+  level: DiagnosticLevel;
+  message: string;
+  file?: RuleFieldRef;
+  line?: RuleFieldRef;
+  related?: RuleFieldRef;
+  data?: Readonly<Record<string, RuleFieldRef>>;
+}
+
+/**
+ * Declarative rule definition. A rule selects one normalized collection, filters
+ * records with data-only predicates and maps a matching record to a finding.
+ */
+export interface RuleSpec {
+  code: string;
+  source: string;
+  enabledBy?: string;
+  where?: readonly RuleCondition[];
+  finding: RuleFindingTemplate;
+}
+
+const field = (name: string): RuleFieldRef => ({ field: name });
+
+/** Built-in policy is data; the evaluator below does not branch on rule codes. */
+export const BUILTIN_RULES: readonly RuleSpec[] = [
+  {
+    code: "architecture/cycle",
+    source: "cycles",
+    enabledBy: "noCycles",
+    finding: {
+      category: "violation",
+      level: "error",
+      message: "Module dependency strongly-connected component: ${modules}.",
+      related: field("modules"),
+      data: { modules: field("modules"), edgeIds: field("edgeIds") },
+    },
+  },
+  {
+    code: "architecture/unresolved-import",
+    source: "imports",
+    where: [{ field: "isUnresolvedInternal", operator: "eq", value: true }],
+    finding: {
+      category: "observation",
+      level: "warning",
+      message: "Could not resolve internal import '${specifier}'.",
+      file: field("fromFile"),
+      line: field("line"),
+      data: { specifier: field("specifier") },
+    },
+  },
+  {
+    code: "architecture/deep-import",
+    source: "imports",
+    enabledBy: "noDeepImports",
+    where: [
+      { field: "isInternal", operator: "eq", value: true },
+      { field: "isCrossModule", operator: "eq", value: true },
+      { field: "isPublicApi", operator: "eq", value: false },
+    ],
+    finding: {
+      category: "violation",
+      level: "warning",
+      message: "${fromModule} imports ${target} instead of ${toModule}'s public entrypoint.",
+      file: field("fromFile"),
+      line: field("line"),
+      data: { from: field("fromModule"), to: field("toModule"), target: field("target") },
+    },
+  },
+  {
+    code: "architecture/forbidden-dependency",
+    source: "forbiddenDependencies",
+    enabledBy: "forbiddenDependencies",
+    finding: {
+      category: "violation",
+      level: "error",
+      message: "${fromModule} is not allowed to depend on ${toModule}.",
+      file: field("fromFile"),
+      line: field("line"),
+      data: { from: field("fromModule"), to: field("toModule") },
+    },
+  },
+  {
+    code: "architecture/no-public-entrypoint",
+    source: "modules",
+    where: [
+      { field: "hasPublicEntrypoint", operator: "eq", value: false },
+      { field: "hasPeers", operator: "eq", value: true },
+    ],
+    finding: {
+      category: "observation",
+      level: "info",
+      message: "Module '${moduleId}' has no index entrypoint; cross-module imports cannot be checked as public API.",
+      related: field("related"),
+    },
+  },
+];
+
+const levelRank = { error: 0, warning: 1, info: 2 } as const;
+
+function evidenceForEdge(edge: SourceImport): EvidenceRef[] {
+  return [{ kind: "source-edge", id: edge.id, file: edge.fromFile, line: edge.location.line }];
+}
+
+function isRelativeLike(specifier: string): boolean {
+  return specifier.startsWith(".") || specifier.startsWith("/") || specifier.startsWith("#");
+}
+
+function cycleRecords(cycles: ArchitectureCycle[]): RuleRecord[] {
+  return cycles.map((cycle) => ({
+    data: { id: cycle.id, modules: cycle.modules, edgeIds: cycle.edgeIds },
+    derivedFrom: cycle.edgeIds,
+    evidence: cycle.edgeIds.map((id) => ({ kind: "module-edge" as const, id })),
+  }));
+}
+
+function importRecords(input: RuleInput): RuleRecord[] {
+  return input.imports.map((edge) => {
+    const fromModule = input.fileToModule.get(edge.fromFile);
+    const toModule = edge.toFile ? input.fileToModule.get(edge.toFile) : undefined;
+    const isInternal = edge.resolution === "internal";
+    const isCrossModule = Boolean(fromModule && toModule && fromModule !== toModule);
+    const isPublicApi = toModule ? input.moduleEntrypoints.get(toModule)?.has(edge.toFile ?? "") === true : false;
+    return {
+      data: {
+        id: edge.id,
+        fromFile: edge.fromFile,
+        toFile: edge.toFile,
+        specifier: edge.specifier,
+        line: edge.location.line,
+        resolution: edge.resolution,
+        fromModule,
+        toModule,
+        target: edge.toFile ?? edge.specifier,
+        isInternal,
+        isCrossModule,
+        isPublicApi,
+        isUnresolvedInternal: edge.resolution === "unresolved" && isRelativeLike(edge.specifier),
+      },
+      derivedFrom: [edge.id],
+      evidence: evidenceForEdge(edge),
+    };
+  });
+}
+
+function forbiddenDependencyRecords(input: RuleInput, imports: readonly RuleRecord[]): RuleRecord[] {
+  const rules = input.config.forbiddenDependencies ?? [];
+  return imports.flatMap((record) => {
+    const fromModule = record.data.fromModule;
+    const toModule = record.data.toModule;
+    if (record.data.isInternal !== true || typeof fromModule !== "string" || typeof toModule !== "string") return [];
+    const matchingRules = rules.filter((rule) => rule.from === fromModule && rule.to === toModule);
+    return matchingRules.map(() => record);
+  });
+}
+
+function moduleRecords(modules: ArchitectureModule[]): RuleRecord[] {
+  return modules.map((module) => ({
+    data: {
+      moduleId: module.id,
+      hasPublicEntrypoint: module.entrypoints.length > 0,
+      hasPeers: modules.length > 1,
+      related: [module.id],
+    },
+    evidence: [{ kind: "module" as const, id: module.id }],
+  }));
+}
+
+/** Project source and architecture facts into collections shared by all rules. */
+export function createRuleContext(input: RuleInput): RuleContext {
+  const imports = importRecords(input);
   return {
-    origin: "derived" as const,
-    analyzer: "architecture-rules",
-    rule,
-    derivedFrom,
-    evidence,
+    flags: {
+      noCycles: input.config.noCycles ?? true,
+      noDeepImports: input.config.noDeepImports ?? true,
+      forbiddenDependencies: (input.config.forbiddenDependencies?.length ?? 0) > 0,
+    },
+    collections: {
+      cycles: cycleRecords(input.cycles),
+      imports,
+      forbiddenDependencies: forbiddenDependencyRecords(input, imports),
+      modules: moduleRecords(input.modules),
+    },
   };
 }
 
-export function evaluateRules(
-  config: InspectorConfig,
-  modules: ArchitectureModule[],
-  imports: SourceImport[],
-  fileToModule: Map<string, string>,
-  moduleEntrypoints: Map<string, Set<string>>,
-  cycles: ArchitectureCycle[],
-): ArchitectureFinding[] {
-  const findings: ArchitectureFinding[] = [];
-  const noCycles = config.noCycles ?? true;
-  const noDeepImports = config.noDeepImports ?? true;
+function isFieldRef(value: RuleValue): value is RuleFieldRef {
+  return typeof value === "object" && value !== null && "field" in value;
+}
 
-  if (noCycles) {
-    for (const cycle of cycles) {
-      findings.push({
-        code: "architecture/cycle",
-        category: "violation",
-        level: "error",
-        message: `Module dependency strongly-connected component: ${cycle.modules.join(", ")}.`,
-        related: cycle.modules,
-        data: { modules: cycle.modules, edgeIds: cycle.edgeIds },
-        provenance: {
-          origin: "derived",
-          analyzer: "architecture-rules",
-          rule: "architecture/cycle",
-          derivedFrom: cycle.edgeIds,
-          evidence: cycle.edgeIds.map((id) => ({ kind: "module-edge" as const, id })),
-        },
-      });
-    }
+function valueOf(record: RuleRecord, value: RuleValue | undefined): unknown {
+  if (value === undefined) return undefined;
+  return isFieldRef(value) ? record.data[value.field] : value;
+}
+
+function matchesCondition(record: RuleRecord, condition: RuleCondition): boolean {
+  const actual = record.data[condition.field];
+  const expected = valueOf(record, condition.value);
+  switch (condition.operator) {
+    case "eq":
+      return actual === expected;
+    case "neq":
+      return actual !== expected;
+    case "truthy":
+      return Boolean(actual);
+    case "falsy":
+      return !actual;
+    case "startsWith":
+      return typeof actual === "string" && typeof expected === "string" && actual.startsWith(expected);
+    case "includes":
+      return Array.isArray(actual)
+        ? actual.includes(expected)
+        : typeof actual === "string" && actual.includes(String(expected));
+    case "gt":
+      return typeof actual === "number" && typeof expected === "number" && actual > expected;
+    case "gte":
+      return typeof actual === "number" && typeof expected === "number" && actual >= expected;
+    case "lt":
+      return typeof actual === "number" && typeof expected === "number" && actual < expected;
+    case "lte":
+      return typeof actual === "number" && typeof expected === "number" && actual <= expected;
   }
+}
 
-  for (const edge of imports) {
-    const fromModule = fileToModule.get(edge.fromFile);
-    const toModule = edge.toFile ? fileToModule.get(edge.toFile) : undefined;
-    if (
-      edge.resolution === "unresolved" &&
-      (edge.specifier.startsWith(".") || edge.specifier.startsWith("/") || edge.specifier.startsWith("#"))
-    ) {
-      findings.push({
-        code: "architecture/unresolved-import",
-        category: "observation",
-        level: "warning",
-        message: `Could not resolve internal import '${edge.specifier}'.`,
-        file: edge.fromFile,
-        line: edge.location.line,
-        data: { specifier: edge.specifier },
-        provenance: derivedProvenance("architecture/unresolved-import", [edge.id], evidenceForEdge(edge)),
-      });
-    }
-    const publicApi = toModule ? moduleEntrypoints.get(toModule)?.has(edge.toFile ?? "") === true : false;
-    if (
-      noDeepImports &&
-      edge.resolution === "internal" &&
-      fromModule &&
-      toModule &&
-      fromModule !== toModule &&
-      !publicApi
-    ) {
-      findings.push({
-        code: "architecture/deep-import",
-        category: "violation",
-        level: "warning",
-        message: `${fromModule} imports ${edge.toFile ?? edge.specifier} instead of ${toModule}'s public entrypoint.`,
-        file: edge.fromFile,
-        line: edge.location.line,
-        data: { from: fromModule, to: toModule, target: edge.toFile },
-        provenance: derivedProvenance("architecture/deep-import", [edge.id], evidenceForEdge(edge)),
-      });
-    }
-  }
+function formatValue(value: unknown): string {
+  if (Array.isArray(value)) return value.join(", ");
+  if (value === undefined || value === null) return "";
+  return String(value);
+}
 
-  for (const rule of config.forbiddenDependencies ?? []) {
-    for (const edge of imports) {
-      const fromModule = fileToModule.get(edge.fromFile);
-      const toModule = edge.toFile ? fileToModule.get(edge.toFile) : undefined;
-      if (fromModule === rule.from && toModule === rule.to && edge.resolution === "internal") {
-        findings.push({
-          code: "architecture/forbidden-dependency",
-          category: "violation",
-          level: "error",
-          message: rule.message ?? `${rule.from} is not allowed to depend on ${rule.to}.`,
-          file: edge.fromFile,
-          line: edge.location.line,
-          data: { from: rule.from, to: rule.to },
-          provenance: derivedProvenance("architecture/forbidden-dependency", [edge.id], evidenceForEdge(edge)),
-        });
-      }
-    }
-  }
+function renderMessage(template: string, record: RuleRecord): string {
+  return template.replace(/\$\{([^}]+)\}/g, (_match, name: string) => formatValue(record.data[name]));
+}
 
-  for (const module of modules) {
-    if (module.entrypoints.length === 0 && modules.length > 1) {
-      findings.push({
-        code: "architecture/no-public-entrypoint",
-        category: "observation",
-        level: "info",
-        message: `Module '${module.id}' has no index entrypoint; cross-module imports cannot be checked as public API.`,
-        related: [module.id],
-        provenance: {
-          origin: "derived",
-          analyzer: "architecture-rules",
-          rule: "architecture/no-public-entrypoint",
-          evidence: [{ kind: "module", id: module.id }],
-        },
-      });
-    }
-  }
+function emitFinding(rule: RuleSpec, record: RuleRecord): ArchitectureFinding {
+  const file = rule.finding.file ? record.data[rule.finding.file.field] : undefined;
+  const line = rule.finding.line ? record.data[rule.finding.line.field] : undefined;
+  const relatedValue = rule.finding.related ? record.data[rule.finding.related.field] : undefined;
+  const related = Array.isArray(relatedValue)
+    ? relatedValue.filter((value): value is string => typeof value === "string")
+    : typeof relatedValue === "string"
+      ? [relatedValue]
+      : undefined;
+  const data = rule.finding.data
+    ? Object.fromEntries(
+        Object.entries(rule.finding.data)
+          .map(([key, reference]) => [key, record.data[reference.field]] as const)
+          .filter(([, value]) => value !== undefined),
+      )
+    : undefined;
+  return {
+    code: rule.code,
+    category: rule.finding.category,
+    level: rule.finding.level,
+    message: renderMessage(rule.finding.message, record),
+    ...(typeof file === "string" ? { file } : {}),
+    ...(typeof line === "number" ? { line } : {}),
+    ...(related ? { related } : {}),
+    ...(data ? { data } : {}),
+    provenance: {
+      origin: "derived",
+      analyzer: "architecture-rules",
+      rule: rule.code,
+      ...(record.derivedFrom?.length ? { derivedFrom: [...record.derivedFrom] } : {}),
+      ...(record.evidence?.length ? { evidence: [...record.evidence] } : {}),
+    },
+  };
+}
 
+/** Evaluate data-only rule specifications against normalized architecture facts. */
+export function evaluateRules(input: RuleInput, specs: readonly RuleSpec[] = BUILTIN_RULES): ArchitectureFinding[] {
+  const context = createRuleContext(input);
+  const findings = specs.flatMap((rule) => {
+    if (rule.enabledBy && context.flags[rule.enabledBy] !== true) return [];
+    const records = context.collections[rule.source] ?? [];
+    return records
+      .filter((record) => (rule.where ?? []).every((condition) => matchesCondition(record, condition)))
+      .map((record) => emitFinding(rule, record));
+  });
   return findings.sort(
     (a, b) =>
       levelRank[a.level] - levelRank[b.level] ||
@@ -148,21 +346,22 @@ export function findingKey(finding: ArchitectureFinding): string {
   ].join("\0");
 }
 
+const FAIL_ON_ALIASES: Readonly<Record<string, string>> = {
+  cycles: "architecture/cycle",
+  cycle: "architecture/cycle",
+  "deep-imports": "architecture/deep-import",
+  "deep-import": "architecture/deep-import",
+  "forbidden-dependencies": "architecture/forbidden-dependency",
+  "forbidden-dependency": "architecture/forbidden-dependency",
+};
+
 /** Return true only when an explicit check policy selects this finding. */
 export function matchesFailOn(finding: ArchitectureFinding, failOn: string[]): boolean {
   if (failOn.length === 0) return false;
   if (failOn.includes("all")) return finding.category === "violation";
   if (failOn.includes("violations") && finding.category === "violation") return true;
-  const aliases: Record<string, string> = {
-    cycles: "architecture/cycle",
-    cycle: "architecture/cycle",
-    "deep-imports": "architecture/deep-import",
-    "deep-import": "architecture/deep-import",
-    "forbidden-dependencies": "architecture/forbidden-dependency",
-    "forbidden-dependency": "architecture/forbidden-dependency",
-  };
   return failOn.some((selector) => {
-    const normalized = aliases[selector] ?? selector;
+    const normalized = FAIL_ON_ALIASES[selector] ?? selector;
     return normalized === finding.code || normalized === finding.code.replace("architecture/", "");
   });
 }
