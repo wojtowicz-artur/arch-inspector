@@ -3,9 +3,8 @@ import fs from "node:fs";
 import { execFileSync, spawnSync } from "node:child_process";
 import path from "node:path";
 import test from "node:test";
-import { createSampleProject } from "./helpers/projects.js";
 import { analyzeProject } from "../src/analyzer.js";
-import { createProject } from "./helpers/projects.js";
+import { createProject, createSampleProject } from "./helpers/projects.js";
 
 const cliPath = path.resolve("dist/src/cli.js");
 

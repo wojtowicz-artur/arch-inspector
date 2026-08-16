@@ -147,7 +147,7 @@ export function discoverProject(inputPath = "."): DiscoveredProject {
     const parsed = ts.parseJsonConfigFileContent(read.config, ts.sys, configRoot, undefined, normalizedConfig);
     if (parsed.errors.length > 0) {
       throw new Error(
-        ts.flattenDiagnosticMessageText(parsed.errors.map((diagnostic) => diagnostic.messageText).join("\n"), "\n"),
+        parsed.errors.map((diagnostic) => ts.flattenDiagnosticMessageText(diagnostic.messageText, "\n")).join("\n"),
       );
     }
     const sourceFiles = parsed.fileNames.filter(isSourceFile).map(normalize);
