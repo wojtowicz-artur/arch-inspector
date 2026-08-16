@@ -191,6 +191,69 @@ test("distinguishes a resolved local file outside the configured analysis scope"
   }
 });
 
+test("enforces declarative boundary zones with deterministic module selectors", () => {
+  const project = createProject({
+    archConfig: {
+      boundaryZones: {
+        ui: {
+          from: ["ui"],
+          allow: ["domain"],
+          deny: ["infra"],
+          message: "UI nie może zależeć od infrastruktury.",
+        },
+      },
+    },
+    files: {
+      "src/modules/ui/index.ts": 'import { infra } from "../infra";\nexport const view = infra;\n',
+      "src/modules/domain/index.ts": "export const domain = true;\n",
+      "src/modules/infra/index.ts": "export const infra = true;\n",
+    },
+  });
+  try {
+    const snapshot = analyzeProject(project.root);
+    const violations = snapshot.analysis.findings.filter(
+      (finding) => finding.code === "architecture/boundary-violation",
+    );
+    assert.equal(violations.length, 1);
+    assert.equal(violations[0].data?.boundaryZone, "ui");
+    assert.equal(violations[0].message, "UI nie może zależeć od infrastruktury.");
+    assert.equal(violations[0].data?.from, "ui");
+    assert.equal(violations[0].data?.to, "infra");
+  } finally {
+    project.cleanup();
+  }
+});
+
+test("retains computed dynamic dependencies as ambiguous edges", () => {
+  const project = createProject({
+    files: {
+      "src/app.ts":
+        'const name = "home";\nexport const lazy = import(`./pages/${name}.js`);\nexport const loaded = require(loader);\n',
+    },
+  });
+  try {
+    const snapshot = analyzeProject(project.root);
+    assert.deepEqual(
+      snapshot.source.imports.map((edge) => [
+        edge.importKind,
+        edge.specifier,
+        edge.resolution,
+        edge.resolutionConfidence,
+      ]),
+      [
+        ["dynamic", "./pages/*.js", "unresolved", "ambiguous"],
+        ["require", "<dynamic>", "unresolved", "ambiguous"],
+      ],
+    );
+    assert.equal(
+      snapshot.analysis.findings.filter((finding) => finding.code === "architecture/dynamic-import-ambiguous").length,
+      2,
+    );
+  } finally {
+    project.cleanup();
+  }
+});
+
 test("supports relative-path IDs for all inferred modules", () => {
   const project = createProject({
     archConfig: { moduleIdStrategy: "relative-path" },

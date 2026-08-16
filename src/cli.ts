@@ -7,14 +7,15 @@ import { analyzeGitRef } from "./git.js";
 import { renderModuleGraphDot } from "./graph.js";
 import { matchesFailOn } from "./rules.js";
 import type { ArchitectureFinding, ArchitectureSnapshot, SourceImport } from "./ir.js";
+import { renderSarif } from "./sarif.js";
 
 function usage(): string {
   return `Usage:
-  arch inspect [project] [--json] [--out <file>]
+  arch inspect [project] [--json|--sarif] [--out <file>]
   arch graph [project] [--json] [--out <file>]  # Graphviz DOT by default
-  arch check [project] [--json] [--out <file>] [--fail-on <selector,...>]
-  arch diff <git-ref|snapshot.json> [project] [--json] [--out <file>] [--check] [--fail-on <selector,...>]
-  arch audit [git-ref|snapshot.json] [project] [--json] [--out <file>] [--fail-on <selector,...>]
+  arch check [project] [--json|--sarif] [--out <file>] [--fail-on <selector,...>]
+  arch diff <git-ref|snapshot.json> [project] [--json|--sarif] [--out <file>] [--check] [--fail-on <selector,...>]
+  arch audit [git-ref|snapshot.json] [project] [--json|--sarif] [--out <file>] [--fail-on <selector,...>]
 
 Selectors include: all, violations, cycles, deep-imports, forbidden-dependency.
 Without --fail-on, check is report-only unless the project config declares failOn.
@@ -27,6 +28,7 @@ interface ParsedArgs {
   command: string;
   project: string;
   json: boolean;
+  sarif: boolean;
   check: boolean;
   failOn?: string[];
   base?: string;
@@ -82,12 +84,18 @@ function parseArgs(args: string[]): ParsedArgs {
     }
   }
   const failOn = parseFailOn(args);
+  if (args.includes("--json") && args.includes("--sarif")) {
+    throw new Error("--json and --sarif are mutually exclusive output formats.");
+  }
+  const sarif = args.includes("--sarif");
+  if (sarif && command === "graph") throw new Error("--sarif is not available for the graph command.");
   if (command === "diff" || command === "audit") {
     return {
       command,
       base: positional[0] ?? "HEAD",
       project: positional[1] ?? ".",
       json: args.includes("--json"),
+      sarif,
       check: command === "audit" || args.includes("--check"),
       ...(failOn ? { failOn } : {}),
       ...(out ? { out } : {}),
@@ -97,6 +105,7 @@ function parseArgs(args: string[]): ParsedArgs {
     command,
     project: positional[0] ?? ".",
     json: args.includes("--json"),
+    sarif,
     check: false,
     ...(failOn ? { failOn } : {}),
     ...(out ? { out } : {}),
@@ -228,8 +237,15 @@ function main(): void {
   }
   if (parsed.command === "diff" || parsed.command === "audit") {
     const { diff, current } = diffProject(parsed);
-    const output = parsed.json ? `${JSON.stringify(diff, null, 2)}\n` : `${renderDiff(diff)}\n`;
-    if (parsed.out) fs.writeFileSync(path.resolve(parsed.out), JSON.stringify(diff, null, 2) + "\n", "utf8");
+    const output = parsed.sarif
+      ? renderSarif(parsed.command === "audit" ? diff.introducedViolations : diff.analysis.findings.added)
+      : parsed.json
+        ? `${JSON.stringify(diff, null, 2)}\n`
+        : `${renderDiff(diff)}\n`;
+    if (parsed.out) {
+      const fileContents = parsed.sarif ? output : JSON.stringify(diff, null, 2) + "\n";
+      fs.writeFileSync(path.resolve(parsed.out), fileContents, "utf8");
+    }
     process.stdout.write(output);
     const failOn = effectivePolicy(current, parsed);
     if ((parsed.check || parsed.failOn) && diff.introducedViolations.some((finding) => matchesFailOn(finding, failOn)))
@@ -237,13 +253,19 @@ function main(): void {
     return;
   }
   const snapshot = inspectSnapshot(parsed.project);
-  const output = parsed.json
-    ? `${JSON.stringify(snapshot, null, 2)}\n`
-    : parsed.command === "graph"
-      ? renderModuleGraphDot(snapshot)
-      : `${renderText(snapshot)}\n`;
+  const output = parsed.sarif
+    ? renderSarif(snapshot.analysis.findings)
+    : parsed.json
+      ? `${JSON.stringify(snapshot, null, 2)}\n`
+      : parsed.command === "graph"
+        ? renderModuleGraphDot(snapshot)
+        : `${renderText(snapshot)}\n`;
   if (parsed.out) {
-    const fileContents = parsed.json || parsed.command !== "graph" ? JSON.stringify(snapshot, null, 2) + "\n" : output;
+    const fileContents = parsed.sarif
+      ? output
+      : parsed.json || parsed.command !== "graph"
+        ? JSON.stringify(snapshot, null, 2) + "\n"
+        : output;
     fs.writeFileSync(path.resolve(parsed.out), fileContents, "utf8");
   }
   process.stdout.write(output);

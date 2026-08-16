@@ -7,7 +7,7 @@ import type {
   EvidenceRef,
   SourceImport,
 } from "./ir.js";
-import type { InspectorConfig } from "./project.js";
+import type { BoundaryZone, InspectorConfig } from "./project.js";
 import { formatSchemaIssues } from "./schema-utils.js";
 import {
   rulePackListSchema,
@@ -122,6 +122,42 @@ export const BUILTIN_RULES: readonly RuleSpec[] = [
       file: field("fromFile"),
       line: field("line"),
       data: { specifier: field("specifier"), target: field("target") },
+    },
+  },
+  {
+    code: "architecture/dynamic-import-ambiguous",
+    source: "imports",
+    where: [
+      { field: "isDynamic", operator: "eq", value: true },
+      { field: "resolutionConfidence", operator: "eq", value: "ambiguous" },
+    ],
+    finding: {
+      category: "observation",
+      level: "warning",
+      message: "Dynamic dependency '${specifier}' could not be resolved statically.",
+      file: field("fromFile"),
+      line: field("line"),
+      data: { specifier: field("specifier"), importKind: field("importKind") },
+    },
+  },
+  {
+    code: "architecture/boundary-violation",
+    source: "imports",
+    where: [{ field: "isBoundaryViolation", operator: "eq", value: true }],
+    finding: {
+      category: "violation",
+      level: "error",
+      message: "${boundaryMessage}",
+      file: field("fromFile"),
+      line: field("line"),
+      related: field("toModule"),
+      data: {
+        from: field("fromModule"),
+        to: field("toModule"),
+        boundaryZone: field("boundaryZone"),
+        specifier: field("specifier"),
+        message: field("boundaryMessage"),
+      },
     },
   },
   {
@@ -254,6 +290,52 @@ function isRelativeLike(specifier: string): boolean {
   return specifier.startsWith(".") || specifier.startsWith("/") || specifier.startsWith("#");
 }
 
+function selectorRegExp(pattern: string): RegExp {
+  let expression = "^";
+  for (let index = 0; index < pattern.length; index += 1) {
+    const character = pattern[index];
+    if (character === "*" && pattern[index + 1] === "*") {
+      expression += ".*";
+      index += 1;
+    } else if (character === "*") {
+      expression += "[^/]*";
+    } else if (character === "?") {
+      expression += "[^/]";
+    } else {
+      expression += character.replace(/[.+^${}()|[\]\\]/g, "\\$&");
+    }
+  }
+  return new RegExp(`${expression}$`);
+}
+
+function matchesSelector(value: string, selector: string): boolean {
+  return selectorRegExp(selector.replaceAll("\\", "/")).test(value.replaceAll("\\", "/"));
+}
+
+function moduleSelectors(module: ArchitectureModule | undefined): string[] {
+  if (!module) return [];
+  return [module.id, module.stableId, module.root].filter((value): value is string => Boolean(value));
+}
+
+function selectorMatchesModule(module: ArchitectureModule | undefined, selector: string): boolean {
+  return moduleSelectors(module).some((value) => matchesSelector(value, selector));
+}
+
+function boundaryViolation(
+  fromModule: ArchitectureModule | undefined,
+  toModule: ArchitectureModule | undefined,
+  zones: Readonly<Record<string, BoundaryZone>> | undefined,
+): { id: string; message?: string } | undefined {
+  if (!fromModule || !toModule || fromModule.id === toModule.id || !zones) return undefined;
+  for (const [id, zone] of Object.entries(zones).sort(([left], [right]) => compare(left, right))) {
+    if (!zone.from.some((selector) => selectorMatchesModule(fromModule, selector))) continue;
+    const denied = zone.deny?.some((selector) => selectorMatchesModule(toModule, selector)) === true;
+    const allowed = zone.allow ? zone.allow.some((selector) => selectorMatchesModule(toModule, selector)) : true;
+    if (denied || !allowed) return { id, ...(zone.message ? { message: zone.message } : {}) };
+  }
+  return undefined;
+}
+
 function cycleRecords(cycles: ArchitectureCycle[]): RuleRecord[] {
   return cycles.map((cycle) => ({
     data: { id: cycle.id, modules: cycle.modules, edgeIds: cycle.edgeIds },
@@ -263,12 +345,21 @@ function cycleRecords(cycles: ArchitectureCycle[]): RuleRecord[] {
 }
 
 function importRecords(input: RuleInput): RuleRecord[] {
+  const modulesById = new Map(input.modules.map((module) => [module.id, module]));
   return input.imports.map((edge) => {
     const fromModule = input.fileToModule.get(edge.fromFile);
     const toModule = edge.toFile ? input.fileToModule.get(edge.toFile) : undefined;
     const isInternal = edge.resolution === "internal";
     const isCrossModule = Boolean(fromModule && toModule && fromModule !== toModule);
     const isPublicApi = toModule ? input.moduleEntrypoints.get(toModule)?.has(edge.toFile ?? "") === true : false;
+    const boundary = boundaryViolation(
+      modulesById.get(fromModule ?? ""),
+      modulesById.get(toModule ?? ""),
+      input.config.boundaryZones,
+    );
+    const boundaryMessage = boundary
+      ? (boundary.message ?? `${fromModule} is not allowed to depend on ${toModule} in boundary zone '${boundary.id}'.`)
+      : undefined;
     return {
       data: {
         id: edge.id,
@@ -278,6 +369,7 @@ function importRecords(input: RuleInput): RuleRecord[] {
         line: edge.location.line,
         resolution: edge.resolution,
         resolutionConfidence: edge.resolutionConfidence,
+        importKind: edge.importKind,
         fromModule,
         toModule,
         target: edge.toFile ?? edge.specifier,
@@ -286,6 +378,10 @@ function importRecords(input: RuleInput): RuleRecord[] {
         isPublicApi,
         isUnresolvedInternal: edge.resolution === "unresolved" && isRelativeLike(edge.specifier),
         isOutOfScope: edge.resolution === "out-of-scope",
+        isDynamic: edge.importKind === "dynamic" || edge.importKind === "require",
+        isBoundaryViolation: boundary !== undefined,
+        boundaryZone: boundary?.id,
+        boundaryMessage,
       },
       derivedFrom: [edge.id],
       evidence: evidenceForEdge(edge),

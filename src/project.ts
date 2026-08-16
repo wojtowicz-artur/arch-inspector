@@ -4,7 +4,7 @@ import ts from "typescript";
 import { inspectorConfigSchema, type InspectorConfig } from "./config-schema.js";
 import { formatSchemaIssues } from "./schema-utils.js";
 
-export type { InspectorConfig, ModuleIdStrategy } from "./config-schema.js";
+export type { BoundaryZone, InspectorConfig, ModuleIdStrategy } from "./config-schema.js";
 
 export interface DiscoveredProject {
   root: string;

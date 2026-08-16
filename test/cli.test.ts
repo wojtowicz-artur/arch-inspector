@@ -81,3 +81,33 @@ test("emits a machine-readable error envelope for JSON CLI failures", () => {
     project.cleanup();
   }
 });
+
+test("emits deterministic SARIF findings for CI integrations", () => {
+  const project = createProject({
+    archConfig: {
+      boundaryZones: {
+        ui: { from: ["ui"], deny: ["infra"] },
+      },
+    },
+    files: {
+      "src/modules/ui/index.ts": 'import { infra } from "../infra";\nexport const view = infra;\n',
+      "src/modules/infra/index.ts": "export const infra = true;\n",
+    },
+  });
+  try {
+    const first = spawnSync(process.execPath, [cliPath, "check", project.root, "--sarif"], { encoding: "utf8" });
+    const second = spawnSync(process.execPath, [cliPath, "check", project.root, "--sarif"], { encoding: "utf8" });
+    assert.equal(first.status, 0);
+    assert.equal(first.stdout, second.stdout);
+    const payload = JSON.parse(first.stdout) as {
+      version: string;
+      runs: Array<{ results: Array<{ ruleId: string; level: string; locations?: unknown[] }> }>;
+    };
+    assert.equal(payload.version, "2.1.0");
+    assert.equal(payload.runs[0].results[0].ruleId, "architecture/boundary-violation");
+    assert.equal(payload.runs[0].results[0].level, "error");
+    assert.equal(payload.runs[0].results[0].locations?.length, 1);
+  } finally {
+    project.cleanup();
+  }
+});

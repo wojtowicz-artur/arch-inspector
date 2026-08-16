@@ -21,6 +21,16 @@ function sourceFileFor(file: string, text: string): ts.SourceFile {
   return ts.createSourceFile(file, text, ts.ScriptTarget.Latest, true, scriptKind);
 }
 
+function dynamicSpecifier(expression: ts.Expression): string {
+  if (ts.isStringLiteral(expression) || ts.isNoSubstitutionTemplateLiteral(expression)) return expression.text;
+  if (ts.isTemplateExpression(expression)) {
+    let value = expression.head.text;
+    for (const span of expression.templateSpans) value += `*${span.literal.text}`;
+    return value || "<dynamic>";
+  }
+  return "<dynamic>";
+}
+
 function collectImports(sourceFile: ts.SourceFile): RawImport[] {
   const imports: RawImport[] = [];
   const add = (specifier: string, kind: ImportKind, position: number, typeOnly = false) => {
@@ -55,11 +65,12 @@ function collectImports(sourceFile: ts.SourceFile): RawImport[] {
         node.getStart(sourceFile),
         node.isTypeOnly === true || allNamedExportsTypeOnly === true,
       );
-    } else if (ts.isCallExpression(node) && node.arguments.length === 1 && ts.isStringLiteral(node.arguments[0])) {
-      if (node.expression.kind === ts.SyntaxKind.ImportKeyword)
-        add(node.arguments[0].text, "dynamic", node.getStart(sourceFile));
-      else if (ts.isIdentifier(node.expression) && node.expression.text === "require")
-        add(node.arguments[0].text, "require", node.getStart(sourceFile));
+    } else if (ts.isCallExpression(node) && node.arguments.length === 1) {
+      if (node.expression.kind === ts.SyntaxKind.ImportKeyword) {
+        add(dynamicSpecifier(node.arguments[0]), "dynamic", node.getStart(sourceFile));
+      } else if (ts.isIdentifier(node.expression) && node.expression.text === "require") {
+        add(dynamicSpecifier(node.arguments[0]), "require", node.getStart(sourceFile));
+      }
     }
     ts.forEachChild(node, visit);
   };
@@ -125,13 +136,15 @@ export function collectEdges(project: DiscoveredProject): SourceImport[] {
           ? "asset"
           : outOfScope
             ? "out-of-scope"
-            : resolvedFile || isBuiltin(current.specifier) || !isLocalLike(current.specifier)
+            : resolvedFile || isBuiltin(current.specifier)
               ? "external"
-              : "unresolved";
+              : current.kind === "dynamic" || current.kind === "require" || isLocalLike(current.specifier)
+                ? "unresolved"
+                : "external";
       const resolutionConfidence =
         resolvedFile !== undefined || isBuiltin(current.specifier)
           ? "exact"
-          : isLocalLike(current.specifier)
+          : current.kind === "dynamic" || current.kind === "require" || isLocalLike(current.specifier)
             ? "ambiguous"
             : "syntactic";
       const location = sourceFile.getLineAndCharacterOfPosition(current.position);

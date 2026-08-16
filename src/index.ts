@@ -9,6 +9,7 @@ export { analyzeProject } from "./analyzer.js";
 export { analyzeGitRef } from "./git.js";
 export { diffSnapshots, loadSnapshot, SnapshotComparisonError } from "./diff.js";
 export { renderModuleGraphDot } from "./graph.js";
+export { createSarifLog, renderSarif } from "./sarif.js";
 export {
   ArchitectureIRValidationError,
   assertArchitectureSnapshot,
@@ -18,7 +19,8 @@ export {
 } from "./ir-contract.js";
 export { IR_CONTRACT, IR_VERSION, TOOL_VERSION } from "./ir.js";
 export { architectureSnapshotSchema } from "./ir-schema.js";
-export { inspectorConfigSchema, moduleIdStrategySchema } from "./config-schema.js";
+export { boundaryZoneSchema, inspectorConfigSchema, moduleIdStrategySchema } from "./config-schema.js";
+export type { BoundaryZone } from "./config-schema.js";
 export { BUILTIN_RULE_PACK, BUILTIN_RULES, createRuleContext, createRuleRegistry, evaluateRules } from "./rules.js";
 export {
   ruleFlagSchema,

@@ -8,7 +8,8 @@ Inspector nie wymaga adnotacji w analizowanym kodzie. Czyta istniejące `tsconfi
 
 - automatyczne moduły na podstawie `src/modules`, `src/features`, `src/app`, `src/shared` lub konfiguracji; kolizyjne nazwy są namespacowane względną ścieżką, np. `features/auth` i `modules/auth`;
 - import graph z obsługą aliasów `paths`, barrel files i package resolution;
-- importy static, export-from, dynamic `import()` i proste `require()`;
+- importy static, export-from, dynamic `import()` i proste `require()`; także
+  jawne obserwacje dynamicznych importów, których nie da się rozwiązać statycznie;
 - rozróżnienie importów internal/external/unresolved/out-of-scope oraz type-only;
 - module graph, cykle, fan-in/fan-out;
 - wykrywanie deep imports względem `index.ts` modułu;
@@ -64,9 +65,11 @@ node dist/src/cli.js inspect ../ścieżka/do/projektu
 node dist/src/cli.js inspect ../ścieżka/do/projektu --json --out architecture.json
 node dist/src/cli.js graph ../ścieżka/do/projektu --out architecture.dot
 node dist/src/cli.js check ../ścieżka/do/projektu
+node dist/src/cli.js check ../ścieżka/do/projektu --sarif --out architecture.sarif
 node dist/src/cli.js check ../ścieżka/do/projektu --fail-on cycles,deep-imports
 node dist/src/cli.js diff main ../ścieżka/do/projektu --check
 node dist/src/cli.js audit main ../ścieżka/do/projektu
+node dist/src/cli.js audit main ../ścieżka/do/projektu --sarif --out architecture.sarif
 ```
 
 `arch check` jest report-only, jeśli nie podano `--fail-on` i projekt nie ma
@@ -77,6 +80,9 @@ wyjścia `3`.
 snapshotem/refem i domyślnie kończy się kodem `1`, gdy wprowadzono naruszenie.
 Błędy analizy kończą się kodem `2`; przy `--json` są emitowane jako pojedynczy
 JSON envelope zamiast tekstu diagnostycznego.
+`--sarif` emituje standardowy SARIF 2.1.0; dla `audit` zawiera tylko naruszenia
+wprowadzone względem bazy, dzięki czemu wynik można bezpośrednio przekazać do
+code-scanning w CI.
 
 Formatowanie zapewnia Oxfmt (`npm run format`), a lintowanie Oxlint
 (`npm run lint`). Konfiguracje znajdują się w `.oxfmtrc.json` i
@@ -112,6 +118,14 @@ Konfiguracja opcjonalna: `arch.config.json` w katalogu projektu:
   "noCycles": true,
   "noDeepImports": true,
   "failOn": ["cycles", "deep-imports"],
+  "boundaryZones": {
+    "ui": {
+      "from": ["admin", "booking"],
+      "allow": ["shared", "calendar"],
+      "deny": ["infrastructure"],
+      "message": "Warstwa UI nie może zależeć od infrastruktury."
+    }
+  },
   "forbiddenDependencies": [
     { "from": "admin", "to": "infrastructure" }
   ],
@@ -142,8 +156,12 @@ Reguła musi wskazywać znaną kolekcję (`cycles`, `imports`,
 `compact` zachowuje krótkie ID dla unikalnych modułów i namespacuje tylko
 kolizje; `relative-path` używa ścieżek względnych dla wszystkich modułów
 inferowanych. Jawnie zadeklarowane moduły zawsze zachowują skonfigurowane ID.
+`boundaryZones` pozwala deklarować granice zależności bez tworzenia osobnej reguły
+dla każdej pary modułów. `from`, `allow` i `deny` przyjmują ID modułów, ich
+`stableId`/korzenie oraz proste wzorce `*` i `**`; jawny `deny` ma pierwszeństwo
+nad `allow`. Naruszenia są emitowane jako `architecture/boundary-violation`.
 
-Domyślnie inspector pomija artefakty `node_modules`, `.next`, `dist`, `build`, `coverage`, `.turbo` i `.cache`. `include` oraz `exclude` odnoszą się do ścieżek względnych względem katalogu z `tsconfig.json`. `modules` pozwala opisać moduły, które nie mają fizycznego `index.ts`. Importy CSS/SCSS, obrazów i fontów są raportowane jako `asset`, a nie jako błędne `unresolved`. Import lokalny rozwiązany do pliku wyłączonego przez `include`/`exclude` ma stan `out-of-scope` i zachowuje `toFile`, dzięki czemu brak krawędzi nie jest mylony z brakiem pliku.
+Domyślnie inspector pomija artefakty `node_modules`, `.next`, `dist`, `build`, `coverage`, `.turbo` i `.cache`. `include` oraz `exclude` odnoszą się do ścieżek względnych względem katalogu z `tsconfig.json`. `modules` pozwala opisać moduły, które nie mają fizycznego `index.ts`. Importy CSS/SCSS, obrazów i fontów są raportowane jako `asset`, a nie jako błędne `unresolved`. Import lokalny rozwiązany do pliku wyłączonego przez `include`/`exclude` ma stan `out-of-scope` i zachowuje `toFile`, dzięki czemu brak krawędzi nie jest mylony z brakiem pliku. Computed `import()`/`require()` są zachowywane jako krawędzie o niepewności `ambiguous` (wzorce template są oznaczane `*`), zamiast znikać z grafu.
 
 To jeszcze nie jest framework ani pełny system kontraktów. IR jest granicą, za którą można później wymienić analyzer, dodać diff Git i jawne deklaracje modułów bez zmiany konsumentów danych.
 
