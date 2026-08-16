@@ -19,8 +19,15 @@ export {
 export { IR_CONTRACT, IR_VERSION, TOOL_VERSION } from "./ir.js";
 export { architectureSnapshotSchema } from "./ir-schema.js";
 export { inspectorConfigSchema } from "./config-schema.js";
-export { BUILTIN_RULES, createRuleContext, evaluateRules } from "./rules.js";
-export { ruleFlagSchema, ruleSpecListSchema, ruleSpecSchema, ruleSourceSchema } from "./rule-schema.js";
+export { BUILTIN_RULE_PACK, BUILTIN_RULES, createRuleContext, createRuleRegistry, evaluateRules } from "./rules.js";
+export {
+  ruleFlagSchema,
+  rulePackListSchema,
+  rulePackSchema,
+  ruleSpecListSchema,
+  ruleSpecSchema,
+  ruleSourceSchema,
+} from "./rule-schema.js";
 
 export type {
   AnalysisFacts,
@@ -55,8 +62,9 @@ export type {
   RuleInput,
   RuleOperator,
   RuleRecord,
+  RuleRegistry,
   RuleSpec,
   RuleValue,
 } from "./rules.js";
-export type { RuleFlag, RuleSource } from "./rule-schema.js";
+export type { RuleFlag, RulePack, RuleSource } from "./rule-schema.js";
 export type { InspectorConfig } from "./project.js";

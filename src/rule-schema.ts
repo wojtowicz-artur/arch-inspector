@@ -43,3 +43,15 @@ export const ruleSpecSchema = z
   .strict();
 
 export const ruleSpecListSchema = z.array(ruleSpecSchema);
+
+export const rulePackSchema = z
+  .object({
+    id: z.string().min(1),
+    version: z.string().min(1),
+    requiredFacts: z.array(ruleSourceSchema),
+    rules: ruleSpecListSchema,
+  })
+  .strict();
+
+export const rulePackListSchema = z.array(rulePackSchema);
+export type RulePack = z.infer<typeof rulePackSchema>;

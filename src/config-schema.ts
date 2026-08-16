@@ -1,5 +1,5 @@
 import { z } from "zod";
-import { ruleSpecSchema } from "./rule-schema.js";
+import { rulePackSchema, ruleSpecSchema } from "./rule-schema.js";
 
 const moduleDeclarationSchema = z
   .object({
@@ -29,6 +29,7 @@ export const inspectorConfigSchema = z
     failOn: z.array(z.string()).optional(),
     forbiddenDependencies: z.array(forbiddenDependencySchema).optional(),
     rules: z.array(ruleSpecSchema).optional(),
+    rulePacks: z.array(rulePackSchema).optional(),
   })
   .strict();
 

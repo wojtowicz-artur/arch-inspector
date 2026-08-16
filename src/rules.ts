@@ -9,7 +9,13 @@ import type {
 } from "./ir.js";
 import type { InspectorConfig } from "./project.js";
 import { formatSchemaIssues } from "./schema-utils.js";
-import { ruleSpecListSchema, type RuleFlag, type RuleSource } from "./rule-schema.js";
+import {
+  rulePackListSchema,
+  ruleSpecListSchema,
+  type RuleFlag,
+  type RulePack,
+  type RuleSource,
+} from "./rule-schema.js";
 import { compare } from "./stable.js";
 
 /** A normalized fact collection which can be consumed by a rule specification. */
@@ -66,8 +72,14 @@ export interface RuleSpec {
   code: string;
   source: RuleSource;
   enabledBy?: RuleFlag;
-  where?: readonly RuleCondition[];
+  where?: RuleCondition[];
   finding: RuleFindingTemplate;
+}
+
+export interface RuleRegistry {
+  packs: readonly RulePack[];
+  rules: readonly RuleSpec[];
+  requiredFacts: readonly RuleSource[];
 }
 
 const field = (name: string): RuleFieldRef => ({ field: name });
@@ -145,6 +157,79 @@ export const BUILTIN_RULES: readonly RuleSpec[] = [
     },
   },
 ];
+
+export const BUILTIN_RULE_PACK: RulePack = {
+  id: "arch-inspector/core",
+  version: "0.3.0",
+  requiredFacts: ["cycles", "imports", "forbiddenDependencies", "modules"],
+  rules: [...BUILTIN_RULES],
+};
+
+function requiredFactsFor(rules: readonly RuleSpec[]): RuleSource[] {
+  return [...new Set(rules.map((rule) => rule.source))].sort();
+}
+
+/** Create a deterministic registry and reject ambiguous or incomplete packs. */
+export function createRuleRegistry(packs: readonly RulePack[]): RuleRegistry {
+  const validated = rulePackListSchema.safeParse(packs);
+  if (!validated.success) throw new Error(`Invalid rule pack: ${formatSchemaIssues(validated.error)}`);
+
+  const sortedPacks = [...validated.data].sort(
+    (left, right) => left.id.localeCompare(right.id) || left.version.localeCompare(right.version),
+  );
+  const seenPackIds = new Set<string>();
+  const seenRuleCodes = new Set<string>();
+  const rules: RuleSpec[] = [];
+  const requiredFacts = new Set<RuleSource>();
+
+  for (const pack of sortedPacks) {
+    if (seenPackIds.has(pack.id)) throw new Error(`Duplicate rule pack id: ${pack.id}`);
+    seenPackIds.add(pack.id);
+    const declaredFacts = new Set(pack.requiredFacts);
+    for (const rule of pack.rules) {
+      if (!declaredFacts.has(rule.source)) {
+        throw new Error(`Rule pack '${pack.id}' does not declare required fact '${rule.source}'.`);
+      }
+      if (seenRuleCodes.has(rule.code)) throw new Error(`Duplicate rule code: ${rule.code}`);
+      seenRuleCodes.add(rule.code);
+      rules.push(rule);
+    }
+    for (const fact of pack.requiredFacts) requiredFacts.add(fact);
+  }
+
+  return {
+    packs: sortedPacks,
+    rules,
+    requiredFacts: [...requiredFacts].sort(),
+  };
+}
+
+function configuredRulePacks(config: InspectorConfig): RulePack[] {
+  const packs: RulePack[] = [BUILTIN_RULE_PACK];
+  if (config.rules?.length) {
+    packs.push({
+      id: "project/rules",
+      version: "config",
+      requiredFacts: requiredFactsFor(config.rules),
+      rules: [...config.rules],
+    });
+  }
+  packs.push(...(config.rulePacks ?? []));
+  return packs;
+}
+
+function inlineRulePack(specs: readonly RuleSpec[]): RulePack {
+  return {
+    id: "runtime/inline",
+    version: "runtime",
+    requiredFacts: requiredFactsFor(specs),
+    rules: [...specs],
+  };
+}
+
+function isRuleRegistry(selection: RuleRegistry | readonly RuleSpec[]): selection is RuleRegistry {
+  return !Array.isArray(selection);
+}
 
 const levelRank = { error: 0, warning: 1, info: 2 } as const;
 
@@ -318,19 +403,25 @@ function emitFinding(rule: RuleSpec, record: RuleRecord): ArchitectureFinding {
 }
 
 /** Evaluate data-only rule specifications against normalized architecture facts. */
-export function evaluateRules(input: RuleInput, specs?: readonly RuleSpec[]): ArchitectureFinding[] {
-  const requested = specs ?? [...BUILTIN_RULES, ...(input.config.rules ?? [])];
-  const validated = ruleSpecListSchema.safeParse(requested);
-  if (!validated.success) {
-    throw new Error(`Invalid rule specification: ${formatSchemaIssues(validated.error)}`);
-  }
-  const seenCodes = new Set<string>();
-  for (const rule of validated.data) {
-    if (seenCodes.has(rule.code)) throw new Error(`Duplicate rule code: ${rule.code}`);
-    seenCodes.add(rule.code);
+export function evaluateRules(input: RuleInput, selection?: RuleRegistry | readonly RuleSpec[]): ArchitectureFinding[] {
+  let registry: RuleRegistry;
+  if (!selection) {
+    registry = createRuleRegistry(configuredRulePacks(input.config));
+  } else if (Array.isArray(selection)) {
+    const validated = ruleSpecListSchema.safeParse(selection);
+    if (!validated.success) {
+      throw new Error(`Invalid rule specification: ${formatSchemaIssues(validated.error)}`);
+    }
+    registry = createRuleRegistry([inlineRulePack(validated.data)]);
+  } else if (isRuleRegistry(selection)) {
+    registry = createRuleRegistry(selection.packs);
+  } else {
+    throw new Error("Invalid rule selection.");
   }
   const context = createRuleContext(input);
-  const findings = validated.data.flatMap((rule) => {
+  const missingFacts = registry.requiredFacts.filter((fact) => !(fact in context.collections));
+  if (missingFacts.length > 0) throw new Error(`Rule registry requires unavailable facts: ${missingFacts.join(", ")}.`);
+  const findings = registry.rules.flatMap((rule) => {
     if (rule.enabledBy && context.flags[rule.enabledBy] !== true) return [];
     const records = context.collections[rule.source] ?? [];
     return records
