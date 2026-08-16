@@ -123,3 +123,36 @@ test("rejects malformed project configuration at the boundary", () => {
     project.cleanup();
   }
 });
+
+test("loads custom declarative rules from project configuration", () => {
+  const project = createProject({
+    archConfig: {
+      rules: [
+        {
+          code: "project/internal-import",
+          source: "imports",
+          where: [{ field: "isInternal", operator: "eq", value: true }],
+          finding: {
+            category: "observation",
+            level: "info",
+            message: "${fromModule} imports ${toModule}.",
+            file: { field: "fromFile" },
+          },
+        },
+      ],
+    },
+    files: {
+      "src/modules/a/index.ts": 'import { b } from "../b/index";\nexport const a = b;\n',
+      "src/modules/b/index.ts": "export const b = true;\n",
+    },
+  });
+  try {
+    const snapshot = analyzeProject(project.root);
+    const customFindings = snapshot.analysis.findings.filter((finding) => finding.code === "project/internal-import");
+    assert.equal(customFindings.length, 1);
+    assert.equal(customFindings[0].file, "src/modules/a/index.ts");
+    assert.equal(customFindings[0].message, "a imports b.");
+  } finally {
+    project.cleanup();
+  }
+});

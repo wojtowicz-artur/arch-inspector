@@ -2,6 +2,12 @@ import { z } from "zod";
 
 const ruleFieldRefSchema = z.object({ field: z.string().min(1) }).strict();
 
+export const ruleSourceSchema = z.enum(["cycles", "imports", "forbiddenDependencies", "modules"]);
+export type RuleSource = z.infer<typeof ruleSourceSchema>;
+
+export const ruleFlagSchema = z.enum(["noCycles", "noDeepImports", "forbiddenDependencies"]);
+export type RuleFlag = z.infer<typeof ruleFlagSchema>;
+
 const ruleValueSchema = z.union([z.string(), z.number(), z.boolean(), z.null(), ruleFieldRefSchema]);
 
 const ruleOperatorSchema = z.enum(["eq", "neq", "truthy", "falsy", "startsWith", "includes", "gt", "gte", "lt", "lte"]);
@@ -29,8 +35,8 @@ const ruleFindingTemplateSchema = z
 export const ruleSpecSchema = z
   .object({
     code: z.string().min(1),
-    source: z.string().min(1),
-    enabledBy: z.string().min(1).optional(),
+    source: ruleSourceSchema,
+    enabledBy: ruleFlagSchema.optional(),
     where: z.array(ruleConditionSchema).optional(),
     finding: ruleFindingTemplateSchema,
   })

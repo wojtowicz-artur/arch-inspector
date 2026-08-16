@@ -13,7 +13,7 @@ export { IR_VERSION, TOOL_VERSION } from "./ir.js";
 export { architectureSnapshotSchema } from "./ir-schema.js";
 export { inspectorConfigSchema } from "./config-schema.js";
 export { BUILTIN_RULES, createRuleContext, evaluateRules } from "./rules.js";
-export { ruleSpecListSchema, ruleSpecSchema } from "./rule-schema.js";
+export { ruleFlagSchema, ruleSpecListSchema, ruleSpecSchema, ruleSourceSchema } from "./rule-schema.js";
 
 export type {
   AnalysisFacts,
@@ -51,4 +51,5 @@ export type {
   RuleSpec,
   RuleValue,
 } from "./rules.js";
+export type { RuleFlag, RuleSource } from "./rule-schema.js";
 export type { InspectorConfig } from "./project.js";

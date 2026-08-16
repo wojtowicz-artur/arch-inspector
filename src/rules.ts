@@ -9,7 +9,7 @@ import type {
 } from "./ir.js";
 import type { InspectorConfig } from "./project.js";
 import { formatSchemaIssues } from "./schema-utils.js";
-import { ruleSpecListSchema } from "./rule-schema.js";
+import { ruleSpecListSchema, type RuleFlag, type RuleSource } from "./rule-schema.js";
 import { compare } from "./stable.js";
 
 /** A normalized fact collection which can be consumed by a rule specification. */
@@ -21,8 +21,8 @@ export interface RuleRecord {
 
 export interface RuleContext {
   /** Feature flags are populated from project policy, not interpreted by individual rules. */
-  flags: Readonly<Record<string, boolean>>;
-  collections: Readonly<Record<string, readonly RuleRecord[]>>;
+  flags: Readonly<Record<RuleFlag, boolean>>;
+  collections: Readonly<Record<RuleSource, readonly RuleRecord[]>>;
 }
 
 export interface RuleInput {
@@ -64,8 +64,8 @@ export interface RuleFindingTemplate {
  */
 export interface RuleSpec {
   code: string;
-  source: string;
-  enabledBy?: string;
+  source: RuleSource;
+  enabledBy?: RuleFlag;
   where?: readonly RuleCondition[];
   finding: RuleFindingTemplate;
 }
@@ -318,10 +318,16 @@ function emitFinding(rule: RuleSpec, record: RuleRecord): ArchitectureFinding {
 }
 
 /** Evaluate data-only rule specifications against normalized architecture facts. */
-export function evaluateRules(input: RuleInput, specs: readonly RuleSpec[] = BUILTIN_RULES): ArchitectureFinding[] {
-  const validated = ruleSpecListSchema.safeParse(specs);
+export function evaluateRules(input: RuleInput, specs?: readonly RuleSpec[]): ArchitectureFinding[] {
+  const requested = specs ?? [...BUILTIN_RULES, ...(input.config.rules ?? [])];
+  const validated = ruleSpecListSchema.safeParse(requested);
   if (!validated.success) {
     throw new Error(`Invalid rule specification: ${formatSchemaIssues(validated.error)}`);
+  }
+  const seenCodes = new Set<string>();
+  for (const rule of validated.data) {
+    if (seenCodes.has(rule.code)) throw new Error(`Duplicate rule code: ${rule.code}`);
+    seenCodes.add(rule.code);
   }
   const context = createRuleContext(input);
   const findings = validated.data.flatMap((rule) => {

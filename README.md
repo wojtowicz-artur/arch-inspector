@@ -101,14 +101,29 @@ Konfiguracja opcjonalna: `arch.config.json` w katalogu projektu:
   "failOn": ["cycles", "deep-imports"],
   "forbiddenDependencies": [
     { "from": "admin", "to": "infrastructure" }
+  ],
+  "rules": [
+    {
+      "code": "project/internal-import",
+      "source": "imports",
+      "where": [{ "field": "isInternal", "operator": "eq", "value": true }],
+      "finding": {
+        "category": "observation",
+        "level": "info",
+        "message": "${fromModule} imports ${toModule}.",
+        "file": { "field": "fromFile" }
+      }
+    }
   ]
 }
 ```
 
 Silnik reguł nie rozgałęzia się po kodach reguł. Reguły są specyfikacjami
 `RuleSpec`: wybierają kolekcję znormalizowanych faktów, nakładają predykaty i
-mapują rekord na finding. Katalog wbudowany można rozszerzyć programowo przez
-`evaluateRules(input, [...BUILTIN_RULES, customRule])`.
+mapują rekord na finding. Katalog wbudowany można rozszerzyć przez pole `rules`
+w `arch.config.json` albo programowo przez `evaluateRules(input, [...])`.
+Reguła musi wskazywać znaną kolekcję (`cycles`, `imports`,
+`forbiddenDependencies` albo `modules`), a kody reguł muszą być unikalne.
 
 Domyślnie inspector pomija artefakty `node_modules`, `.next`, `dist`, `build`, `coverage`, `.turbo` i `.cache`. `include` oraz `exclude` odnoszą się do ścieżek względnych względem katalogu z `tsconfig.json`. `modules` pozwala opisać moduły, które nie mają fizycznego `index.ts`. Importy CSS/SCSS, obrazów i fontów są raportowane jako `asset`, a nie jako błędne `unresolved`.
 
