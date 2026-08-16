@@ -16,12 +16,16 @@ const forbiddenDependencySchema = z
   })
   .strict();
 
+export const moduleIdStrategySchema = z.enum(["compact", "relative-path"]);
+export type ModuleIdStrategy = z.infer<typeof moduleIdStrategySchema>;
+
 /** Runtime contract for the optional arch.config.json file. */
 export const inspectorConfigSchema = z
   .object({
     include: z.array(z.string()).optional(),
     exclude: z.array(z.string()).optional(),
     moduleRoots: z.array(z.string()).optional(),
+    moduleIdStrategy: moduleIdStrategySchema.optional(),
     modules: z.record(z.string(), moduleDeclarationSchema).optional(),
     publicEntrypoints: z.record(z.string(), z.array(z.string())).optional(),
     noCycles: z.boolean().optional(),

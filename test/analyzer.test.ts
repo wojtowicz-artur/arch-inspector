@@ -112,6 +112,26 @@ test("namespaces colliding inferred module ids by root", () => {
   }
 });
 
+test("supports relative-path IDs for all inferred modules", () => {
+  const project = createProject({
+    archConfig: { moduleIdStrategy: "relative-path" },
+    files: {
+      "src/modules/auth/index.ts": "export const modulesAuth = true;\n",
+      "src/features/auth/index.ts": "export const featuresAuth = true;\n",
+      "src/modules/booking/index.ts": "export const booking = true;\n",
+    },
+  });
+  try {
+    const snapshot = analyzeProject(project.root);
+    assert.deepEqual(
+      snapshot.architecture.modules.map((module) => module.id),
+      ["features/auth", "modules/auth", "modules/booking"],
+    );
+  } finally {
+    project.cleanup();
+  }
+});
+
 test("rejects malformed project configuration at the boundary", () => {
   const project = createProject({
     archConfig: { noCycles: "yes" },

@@ -1,5 +1,6 @@
 import fs from "node:fs";
 import path from "node:path";
+import type { ModuleIdStrategy } from "./config-schema.js";
 import type { ArchitectureModule } from "./ir.js";
 import { isWithin, relativeToRoot, resolveConfiguredModuleRoots, type DiscoveredProject } from "./project.js";
 
@@ -57,7 +58,11 @@ function uniqueId(preferred: string, fallback: string, used: Set<string>): strin
   return `${fallback}#${suffix}`;
 }
 
-function assignModuleIds(project: DiscoveredProject, candidates: ModuleCandidate[]): Map<string, string> {
+function assignModuleIds(
+  project: DiscoveredProject,
+  candidates: ModuleCandidate[],
+  strategy: ModuleIdStrategy,
+): Map<string, string> {
   const inferredByBaseId = new Map<string, number>();
   for (const candidate of candidates) {
     if (!candidate.declared) inferredByBaseId.set(candidate.baseId, (inferredByBaseId.get(candidate.baseId) ?? 0) + 1);
@@ -76,7 +81,7 @@ function assignModuleIds(project: DiscoveredProject, candidates: ModuleCandidate
     const fallback = relativeModulePath(project, candidate.root);
     const preferred = candidate.declared
       ? candidate.baseId
-      : (inferredByBaseId.get(candidate.baseId) ?? 0) > 1
+      : strategy === "relative-path" || (inferredByBaseId.get(candidate.baseId) ?? 0) > 1
         ? fallback
         : candidate.baseId;
     const id = uniqueId(preferred, fallback, used);
@@ -123,7 +128,7 @@ export function inferModules(project: DiscoveredProject): {
   }
 
   const candidates = [...candidatesByRoot.values()].sort((a, b) => a.root.localeCompare(b.root));
-  const rootToId = assignModuleIds(project, candidates);
+  const rootToId = assignModuleIds(project, candidates, project.config.moduleIdStrategy ?? "compact");
   const assignments = candidates.map((candidate) => ({ ...candidate, id: rootToId.get(candidate.root)! }));
   const moduleRoots = new Map(assignments.map((assignment) => [assignment.id, assignment.root]));
 
