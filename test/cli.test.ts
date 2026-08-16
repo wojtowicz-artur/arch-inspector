@@ -22,12 +22,18 @@ test("graph renders a deterministic module graph as Graphviz DOT", () => {
   }
 });
 
-test("check exits non-zero for warning-level architecture violations", () => {
+test("check is report-only until a finding policy is explicitly selected", () => {
   const project = createSampleProject();
   try {
-    const result = spawnSync(process.execPath, [cliPath, "check", project.root], { encoding: "utf8" });
-    assert.equal(result.status, 1);
-    assert.match(result.stdout, /architecture\/deep-import/);
+    const report = spawnSync(process.execPath, [cliPath, "check", project.root], { encoding: "utf8" });
+    assert.equal(report.status, 0);
+    assert.match(report.stdout, /architecture\/deep-import/);
+
+    const enforced = spawnSync(process.execPath, [cliPath, "check", project.root, "--fail-on", "deep-imports"], {
+      encoding: "utf8",
+    });
+    assert.equal(enforced.status, 1);
+    assert.match(enforced.stdout, /architecture\/deep-import/);
   } finally {
     project.cleanup();
   }

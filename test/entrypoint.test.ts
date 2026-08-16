@@ -9,7 +9,7 @@ test("public entrypoint exposes the library API", () => {
     const snapshot = analyzeProject(project.root);
     const diff = diffSnapshots(snapshot, snapshot);
 
-    assert.equal(IR_VERSION, "0.2");
+    assert.equal(IR_VERSION, "0.3");
     assert.equal(snapshot.irVersion, IR_VERSION);
     assert.equal(diff.hasRegressions, false);
     assert.match(renderModuleGraphDot(snapshot), /^digraph architecture \{/);

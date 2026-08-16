@@ -2,7 +2,7 @@
 
 Pierwszy eksperymentalny slice toolingu do obserwowania ewolucji architektury TypeScript.
 
-## MVP 0.2
+## MVP 0.3
 
 Inspector nie wymaga adnotacji w analizowanym kodzie. Czyta istniejące `tsconfig.json`, wykorzystuje TypeScript Compiler API do rozwiązywania importów i emituje deterministyczny Architecture IR:
 
@@ -12,16 +12,20 @@ Inspector nie wymaga adnotacji w analizowanym kodzie. Czyta istniejące `tsconfi
 - rozróżnienie importów internal/external/unresolved oraz type-only;
 - module graph, cykle, fan-in/fan-out;
 - wykrywanie deep imports względem `index.ts` modułu;
-- deterministyczny JSON z wersjonowanym `irVersion`;
+- deterministyczny JSON z wersjonowanym `irVersion` i snapshot receipt;
 - reguły `noCycles`, `noDeepImports` i jawne zakazane zależności.
 
-Snapshot rozdziela fakty źródłowe od architektonicznych:
-`source.files` i `source.edges` opisują to, co wynika z plików i resolvera,
-a `architecture` zawiera moduły, krawędzie modułów, cykle, metryki i diagnostykę.
-Każdy fakt ma `provenance.origin` (`source`, `config`, `inferred` albo `derived`).
-Zmiana schematu podnosi `irVersion` do `0.2`.
+Snapshot ma trzy warstwy:
 
-## Architecture Diff 0.2
+- `source.files` i `source.imports` — fakty zaobserwowane w plikach i resolverze;
+- `architecture.modules`, `architecture.ownership` i `architecture.moduleEdges` — projekcja granic modułów;
+- `analysis.cycles`, `analysis.metrics` i `analysis.findings` — wyniki algorytmów i reguł.
+
+Każdy fakt ma `provenance` z pochodzeniem (`observed`, `declared`, `inferred` albo
+`derived`) oraz opcjonalnym evidence. Receipt zawiera `snapshotId`, wersję
+narzędzia, hash konfiguracji, opcji kompilatora i wejścia.
+
+## Architecture Diff 0.3
 
 Diff porównuje snapshot z aktualnym working tree albo z refem Git. To porównanie jest oparte o stabilne identyfikatory modułów, plików i krawędzi, więc zmiana numeru linii sama w sobie nie tworzy nowej zależności.
 
@@ -35,11 +39,15 @@ node dist/src/cli.js diff architecture-baseline.json .
 # albo porównaj z commitem/branchem Git (bez zmiany worktree)
 node dist/src/cli.js diff main .
 
-# tryb CI: zakończ kodem 1, jeśli pojawiły się nowe naruszenia/cykle
+# jawnie włącz politykę failowania w CI
 node dist/src/cli.js diff main . --check
+node dist/src/cli.js diff main . --check --fail-on cycles,deep-imports
 ```
 
-Diff pokazuje dodane/usunięte moduły, pliki, zależności, cykle, diagnostyki oraz zmiany metryk. `hasRegressions` jest `true`, gdy pojawił się nowy cykl albo nowe naruszenie reguły.
+Diff pokazuje dodane/usunięte moduły, ownership plików, importy, zależności,
+cykle, findings oraz zmiany metryk. Snapshoty z inną konfiguracją lub opcjami
+kompilatora są odrzucane jako nieporównywalne. `hasRegressions` jest `true`, gdy
+pojawił się nowy cykl albo nowe naruszenie reguły.
 
 ## Uruchomienie
 
@@ -47,12 +55,25 @@ Diff pokazuje dodane/usunięte moduły, pliki, zależności, cykle, diagnostyki 
 npm install
 npm test
 npm run build
+npm run format:check
+npm run lint
+npm run quality
 node dist/src/cli.js inspect ../ścieżka/do/projektu
 node dist/src/cli.js inspect ../ścieżka/do/projektu --json --out architecture.json
 node dist/src/cli.js graph ../ścieżka/do/projektu --out architecture.dot
 node dist/src/cli.js check ../ścieżka/do/projektu
+node dist/src/cli.js check ../ścieżka/do/projektu --fail-on cycles,deep-imports
 node dist/src/cli.js diff main ../ścieżka/do/projektu --check
 ```
+
+`arch check` jest report-only, jeśli nie podano `--fail-on` i projekt nie ma
+polityki `failOn` w konfiguracji. `--check` przy `arch diff` jest jawnym żądaniem
+failowania na wprowadzonych naruszeniach; brak porównywalności kończy się kodem
+wyjścia `3`.
+
+Formatowanie zapewnia Oxfmt (`npm run format`), a lintowanie Oxlint
+(`npm run lint`). Konfiguracje znajdują się w `.oxfmtrc.json` i
+`.oxlintrc.json`; zakres narzędzi obejmuje `src` oraz `test`.
 
 `arch graph` emituje deterministyczny graf modułów w formacie Graphviz DOT. Węzły
 uczestniczące w cyklu są wyróżnione, a etykiety krawędzi pokazują liczbę
@@ -73,6 +94,7 @@ Konfiguracja opcjonalna: `arch.config.json` w katalogu projektu:
   },
   "noCycles": true,
   "noDeepImports": true,
+  "failOn": ["cycles", "deep-imports"],
   "forbiddenDependencies": [
     { "from": "admin", "to": "infrastructure" }
   ]

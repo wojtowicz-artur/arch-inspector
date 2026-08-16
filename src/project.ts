@@ -20,6 +20,8 @@ export interface InspectorConfig {
   publicEntrypoints?: Record<string, string[]>;
   noCycles?: boolean;
   noDeepImports?: boolean;
+  /** Finding selectors enforced by `arch check`; empty means report-only. */
+  failOn?: string[];
   forbiddenDependencies?: Array<{
     from: string;
     to: string;

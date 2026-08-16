@@ -2,20 +2,23 @@
 import fs from "node:fs";
 import path from "node:path";
 import { analyzeProject } from "./analyzer.js";
-import { diffSnapshots, loadSnapshot, type ArchitectureDiff } from "./diff.js";
+import { diffSnapshots, loadSnapshot, SnapshotComparisonError, type ArchitectureDiff } from "./diff.js";
 import { analyzeGitRef } from "./git.js";
 import { renderModuleGraphDot } from "./graph.js";
-import type { ArchitectureSnapshot, ArchitectureDiagnostic, ArchitectureEdge } from "./ir.js";
+import { matchesFailOn } from "./rules.js";
+import type { ArchitectureFinding, ArchitectureSnapshot, SourceImport } from "./ir.js";
 
 function usage(): string {
   return `Usage:
   arch inspect [project] [--json] [--out <file>]
   arch graph [project] [--json] [--out <file>]  # Graphviz DOT by default
-  arch check [project] [--json] [--out <file>]
-  arch diff <git-ref|snapshot.json> [project] [--json] [--out <file>] [--check]
+  arch check [project] [--json] [--out <file>] [--fail-on <selector,...>]
+  arch diff <git-ref|snapshot.json> [project] [--json] [--out <file>] [--check] [--fail-on <selector,...>]
 
+Selectors include: all, violations, cycles, deep-imports, forbidden-dependency.
+Without --fail-on, check is report-only unless the project config declares failOn.
 The inspector reads an existing TypeScript project and emits a deterministic Architecture IR snapshot.
-The diff command compares the current project with a snapshot or a Git ref without changing the worktree.`;
+The diff command compares the current project with a comparable snapshot or Git ref without changing the worktree.`;
 }
 
 interface ParsedArgs {
@@ -23,8 +26,39 @@ interface ParsedArgs {
   project: string;
   json: boolean;
   check: boolean;
+  failOn?: string[];
   base?: string;
   out?: string;
+}
+
+function parseFailOn(args: string[]): string[] | undefined {
+  const values: string[] = [];
+  let present = false;
+  for (let index = 0; index < args.length; index += 1) {
+    const argument = args[index];
+    if (argument === "--fail-on") {
+      present = true;
+      const value = args[index + 1];
+      if (!value || value.startsWith("--")) throw new Error("--fail-on requires a comma-separated selector list.");
+      values.push(
+        ...value
+          .split(",")
+          .map((selector) => selector.trim())
+          .filter(Boolean),
+      );
+      index += 1;
+    } else if (argument.startsWith("--fail-on=")) {
+      present = true;
+      values.push(
+        ...argument
+          .slice("--fail-on=".length)
+          .split(",")
+          .map((selector) => selector.trim())
+          .filter(Boolean),
+      );
+    }
+  }
+  return present ? [...new Set(values)].sort() : undefined;
 }
 
 function parseArgs(args: string[]): ParsedArgs {
@@ -37,11 +71,15 @@ function parseArgs(args: string[]): ParsedArgs {
     const argument = args[index];
     if (argument === "--out" || argument === "-o") {
       out = args[index + 1];
+      if (!out || out.startsWith("--")) throw new Error("--out requires a file path.");
+      index += 1;
+    } else if (argument === "--fail-on") {
       index += 1;
     } else if (!argument.startsWith("--")) {
       positional.push(argument);
     }
   }
+  const failOn = parseFailOn(args);
   if (command === "diff") {
     return {
       command,
@@ -49,6 +87,7 @@ function parseArgs(args: string[]): ParsedArgs {
       project: positional[1] ?? ".",
       json: args.includes("--json"),
       check: args.includes("--check"),
+      ...(failOn ? { failOn } : {}),
       ...(out ? { out } : {}),
     };
   }
@@ -57,15 +96,18 @@ function parseArgs(args: string[]): ParsedArgs {
     project: positional[0] ?? ".",
     json: args.includes("--json"),
     check: false,
+    ...(failOn ? { failOn } : {}),
     ...(out ? { out } : {}),
   };
 }
 
 function renderText(snapshot: ArchitectureSnapshot): string {
-  const { metrics, diagnostics } = snapshot.architecture;
+  const { metrics } = snapshot.analysis;
+  const findings = snapshot.analysis.findings;
   const lines = [
     "Architecture inspection",
     `Project: ${snapshot.project.root}`,
+    `Snapshot: ${snapshot.receipt.snapshotId}`,
     `Files: ${metrics.sourceFiles}`,
     `Modules: ${metrics.modules}`,
     `Imports: ${metrics.imports} (${metrics.internalImports} internal, ${metrics.externalImports} external, ${metrics.assetImports} assets, ${metrics.unresolvedImports} unresolved)`,
@@ -74,28 +116,29 @@ function renderText(snapshot: ArchitectureSnapshot): string {
     `Deep imports: ${metrics.deepImports}`,
     `Max fan-in: ${metrics.maxFanIn ? `${metrics.maxFanIn.module} (${metrics.maxFanIn.value})` : "-"}`,
     `Max fan-out: ${metrics.maxFanOut ? `${metrics.maxFanOut.module} (${metrics.maxFanOut.value})` : "-"}`,
+    `Policy: ${snapshot.policy.failOn.length > 0 ? snapshot.policy.failOn.join(", ") : "report-only"}`,
   ];
-  if (diagnostics.length > 0) {
-    lines.push("", "Diagnostics:");
-    for (const diagnostic of diagnostics) {
-      const location = diagnostic.file ? ` (${diagnostic.file}${diagnostic.line ? `:${diagnostic.line}` : ""})` : "";
-      lines.push(`- [${diagnostic.level}] ${diagnostic.code}: ${diagnostic.message}${location}`);
-    }
+  if (findings.length > 0) {
+    lines.push("", "Findings:");
+    for (const finding of findings) lines.push(`- ${shortFinding(finding)}`);
   }
   return lines.join("\n");
 }
 
-function shortEdge(edge: ArchitectureEdge): string {
-  return `${edge.fromModule} → ${edge.toModule ?? edge.specifier}${edge.toFile ? ` (${edge.toFile})` : ""}`;
+function shortImport(edge: SourceImport): string {
+  return `${edge.fromFile} → ${edge.toFile ?? edge.specifier}`;
 }
 
-function shortDiagnostic(diagnostic: ArchitectureDiagnostic): string {
-  const location = diagnostic.file ? ` (${diagnostic.file}${diagnostic.line ? `:${diagnostic.line}` : ""})` : "";
-  return `[${diagnostic.level}] ${diagnostic.code}: ${diagnostic.message}${location}`;
+function shortFinding(finding: ArchitectureFinding): string {
+  const location = finding.file ? ` (${finding.file}${finding.line ? `:${finding.line}` : ""})` : "";
+  return `[${finding.level}] ${finding.code}: ${finding.message}${location}`;
 }
 
 function renderDiff(diff: ArchitectureDiff): string {
-  const lines = [`Architecture diff: ${diff.base} → ${diff.current}`];
+  const lines = [
+    `Architecture diff: ${diff.base} → ${diff.current}`,
+    `Policy: ${diff.policy.failOn.length > 0 ? diff.policy.failOn.join(", ") : "report-only"}`,
+  ];
   const section = (title: string, added: string[], removed: string[], changed: string[] = []): void => {
     if (added.length === 0 && removed.length === 0 && changed.length === 0) return;
     lines.push("", `${title}:`);
@@ -111,9 +154,15 @@ function renderDiff(diff: ArchitectureDiff): string {
   );
   section(
     "Files",
-    diff.source.files.added.map((file) => `${file.path} [${file.moduleId}]`),
-    diff.source.files.removed.map((file) => `${file.path} [${file.moduleId}]`),
+    diff.source.files.added.map((file) => file.path),
+    diff.source.files.removed.map((file) => file.path),
     diff.source.files.changed.map(({ after }) => `${after.path} changed`),
+  );
+  section(
+    "Module ownership",
+    diff.architecture.ownership.added.map((entry) => `${entry.file} → ${entry.module}`),
+    diff.architecture.ownership.removed.map((entry) => `${entry.file} → ${entry.module}`),
+    diff.architecture.ownership.changed.map(({ after }) => `${after.file} → ${after.module} changed`),
   );
   section(
     "Module edges",
@@ -123,32 +172,29 @@ function renderDiff(diff: ArchitectureDiff): string {
   );
   section(
     "Import edges",
-    diff.source.edges.added.map(shortEdge),
-    diff.source.edges.removed.map(shortEdge),
-    diff.source.edges.changed.map(({ after }) => `${shortEdge(after)} changed`),
+    diff.source.imports.added.map(shortImport),
+    diff.source.imports.removed.map(shortImport),
+    diff.source.imports.changed.map(({ after }) => `${shortImport(after)} changed`),
   );
   section(
     "Cycles",
-    diff.architecture.cycles.added.map((cycle) => `${cycle.modules.join(" → ")} → ${cycle.modules[0]}`),
-    diff.architecture.cycles.removed.map((cycle) => `${cycle.modules.join(" → ")} → ${cycle.modules[0]}`),
+    diff.analysis.cycles.added.map((cycle) => cycle.modules.join(", ")),
+    diff.analysis.cycles.removed.map((cycle) => cycle.modules.join(", ")),
   );
   section(
-    "Diagnostics",
-    diff.architecture.diagnostics.added.map(shortDiagnostic),
-    diff.architecture.diagnostics.removed.map(shortDiagnostic),
-    diff.architecture.diagnostics.changed.map(({ after }) => `${shortDiagnostic(after)} changed`),
+    "Findings",
+    diff.analysis.findings.added.map(shortFinding),
+    diff.analysis.findings.removed.map(shortFinding),
+    diff.analysis.findings.changed.map(({ after }) => `${shortFinding(after)} changed`),
   );
 
-  const changedMetrics = Object.entries(diff.architecture.metrics).filter(([, metric]) => metric.delta !== 0);
+  const changedMetrics = Object.entries(diff.analysis.metrics).filter(([, metric]) => metric.delta !== 0);
   if (changedMetrics.length > 0) {
     lines.push("", "Metrics:");
     for (const [name, metric] of changedMetrics)
       lines.push(`- ${name}: ${metric.before} → ${metric.after} (${metric.delta > 0 ? "+" : ""}${metric.delta})`);
   }
-  lines.push(
-    "",
-    diff.hasRegressions ? "Result: regressions introduced" : "Result: no introduced architecture violations",
-  );
+  lines.push("", diff.hasRegressions ? "Result: regressions introduced" : "Result: no introduced violations");
   return lines.join("\n");
 }
 
@@ -156,7 +202,7 @@ function inspectSnapshot(project: string): ArchitectureSnapshot {
   return analyzeProject(path.resolve(project));
 }
 
-function diffProject(parsed: ParsedArgs): ArchitectureDiff {
+function diffProject(parsed: ParsedArgs): { diff: ArchitectureDiff; current: ArchitectureSnapshot } {
   const projectPath = path.resolve(parsed.project);
   const current = inspectSnapshot(projectPath);
   const basePath = path.resolve(parsed.base!);
@@ -164,7 +210,12 @@ function diffProject(parsed: ParsedArgs): ArchitectureDiff {
     fs.existsSync(basePath) && fs.statSync(basePath).isFile()
       ? loadSnapshot(basePath)
       : analyzeGitRef(parsed.base!, projectPath);
-  return diffSnapshots(base, current, { base: parsed.base, current: "working tree" });
+  return { diff: diffSnapshots(base, current, { base: parsed.base, current: "working tree" }), current };
+}
+
+function effectivePolicy(snapshot: ArchitectureSnapshot, parsed: ParsedArgs): string[] {
+  if (parsed.failOn) return parsed.failOn;
+  return parsed.check ? ["all"] : snapshot.policy.failOn;
 }
 
 function main(): void {
@@ -174,11 +225,13 @@ function main(): void {
     return;
   }
   if (parsed.command === "diff") {
-    const diff = diffProject(parsed);
+    const { diff, current } = diffProject(parsed);
     const output = parsed.json ? `${JSON.stringify(diff, null, 2)}\n` : `${renderDiff(diff)}\n`;
     if (parsed.out) fs.writeFileSync(path.resolve(parsed.out), JSON.stringify(diff, null, 2) + "\n", "utf8");
     process.stdout.write(output);
-    if (parsed.check && diff.hasRegressions) process.exitCode = 1;
+    const failOn = effectivePolicy(current, parsed);
+    if ((parsed.check || parsed.failOn) && diff.introducedViolations.some((finding) => matchesFailOn(finding, failOn)))
+      process.exitCode = 1;
     return;
   }
   const snapshot = inspectSnapshot(parsed.project);
@@ -192,16 +245,15 @@ function main(): void {
     fs.writeFileSync(path.resolve(parsed.out), fileContents, "utf8");
   }
   process.stdout.write(output);
-  if (
-    parsed.command === "check" &&
-    snapshot.architecture.diagnostics.some((diagnostic) => diagnostic.category === "violation")
-  )
-    process.exitCode = 1;
+  if (parsed.command === "check") {
+    const failOn = effectivePolicy(snapshot, parsed);
+    if (snapshot.analysis.findings.some((finding) => matchesFailOn(finding, failOn))) process.exitCode = 1;
+  }
 }
 
 try {
   main();
 } catch (error) {
   console.error(error instanceof Error ? error.message : error);
-  process.exitCode = 1;
+  process.exitCode = error instanceof SnapshotComparisonError ? 3 : 1;
 }

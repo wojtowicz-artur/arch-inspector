@@ -1,32 +1,65 @@
-import type { ArchitectureEdge, ArchitectureModule, ArchitectureSnapshot, ModuleEdge } from "./ir.js";
+import type { ArchitectureCycle, ArchitectureModule, ArchitectureSnapshot, ModuleEdge, SourceImport } from "./ir.js";
+import { compare } from "./stable.js";
 
-export function buildModuleEdges(edges: ArchitectureEdge[]): ModuleEdge[] {
+export function buildModuleEdges(
+  imports: SourceImport[],
+  fileToModule: Map<string, string>,
+  moduleEntrypoints: Map<string, Set<string>>,
+): ModuleEdge[] {
   const grouped = new Map<string, ModuleEdge>();
-  for (const edge of edges) {
-    if (edge.resolution !== "internal" || !edge.toModule || edge.fromModule === edge.toModule) continue;
-    const key = `${edge.fromModule}\0${edge.toModule}`;
+  for (const edge of imports) {
+    if (edge.resolution !== "internal" || !edge.toFile) continue;
+    const from = fileToModule.get(edge.fromFile);
+    const to = fileToModule.get(edge.toFile);
+    if (!from || !to || from === to) continue;
+    const key = `${from}\0${to}`;
     const current = grouped.get(key) ?? {
-      from: edge.fromModule,
-      to: edge.toModule,
+      id: key,
+      from,
+      to,
       imports: 0,
       publicApiImports: 0,
+      deepImports: 0,
       files: [],
-      provenance: { origin: "derived" as const },
+      sourceEdgeIds: [],
+      visibility: "deep" as const,
+      provenance: {
+        origin: "derived" as const,
+        analyzer: "module-projection",
+      },
     };
+    const publicApi = moduleEntrypoints.get(to)?.has(edge.toFile) === true;
     current.imports += 1;
-    if (edge.publicApi) current.publicApiImports += 1;
+    if (publicApi) current.publicApiImports += 1;
+    else current.deepImports += 1;
     if (!current.files.includes(edge.fromFile)) current.files.push(edge.fromFile);
+    if (!current.sourceEdgeIds.includes(edge.id)) current.sourceEdgeIds.push(edge.id);
+    current.visibility =
+      current.publicApiImports > 0 && current.deepImports > 0
+        ? "mixed"
+        : current.publicApiImports > 0
+          ? "public"
+          : "deep";
     grouped.set(key, current);
   }
   return [...grouped.values()]
-    .map((edge) => ({ ...edge, files: edge.files.sort() }))
-    .sort((a, b) => `${a.from}:${a.to}`.localeCompare(`${b.from}:${b.to}`));
+    .map((edge) => ({
+      ...edge,
+      files: [...edge.files].sort(compare),
+      sourceEdgeIds: [...edge.sourceEdgeIds].sort(compare),
+      provenance: {
+        ...edge.provenance,
+        derivedFrom: [...edge.sourceEdgeIds].sort(compare),
+        evidence: edge.sourceEdgeIds.map((id) => ({ kind: "source-edge" as const, id })),
+      },
+    }))
+    .sort((a, b) => compare(a.id, b.id));
 }
 
-export function findCycles(modules: ArchitectureModule[], moduleEdges: ModuleEdge[]): string[][] {
+export function findCycles(modules: ArchitectureModule[], moduleEdges: ModuleEdge[]): ArchitectureCycle[] {
   const adjacency = new Map(modules.map((module) => [module.id, [] as string[]]));
   for (const edge of moduleEdges) adjacency.get(edge.from)?.push(edge.to);
-  for (const values of adjacency.values()) values.sort();
+  for (const values of adjacency.values()) values.sort(compare);
 
   let index = 0;
   const indices = new Map<string, number>();
@@ -57,12 +90,35 @@ export function findCycles(modules: ArchitectureModule[], moduleEdges: ModuleEdg
         onStack.delete(current);
         component.push(current);
       } while (current !== node);
-      if (component.length > 1) components.push(component.sort());
+      if (component.length > 1) components.push(component.sort(compare));
     }
   };
 
-  for (const module of modules) if (!indices.has(module.id)) visit(module.id);
-  return components.sort((a, b) => a.join("\0").localeCompare(b.join("\0")));
+  for (const module of [...modules].sort((a, b) => compare(a.id, b.id))) {
+    if (!indices.has(module.id)) visit(module.id);
+  }
+
+  return components
+    .sort((a, b) => compare(a.join("\0"), b.join("\0")))
+    .map((members) => {
+      const memberSet = new Set(members);
+      const edgeIds = moduleEdges
+        .filter((edge) => memberSet.has(edge.from) && memberSet.has(edge.to))
+        .map((edge) => edge.id)
+        .sort(compare);
+      const id = members.join("\0");
+      return {
+        id,
+        modules: members,
+        edgeIds,
+        provenance: {
+          origin: "derived" as const,
+          analyzer: "tarjan-scc",
+          derivedFrom: edgeIds,
+          evidence: edgeIds.map((edgeId) => ({ kind: "module-edge" as const, id: edgeId })),
+        },
+      };
+    });
 }
 
 function dotString(value: string): string {
@@ -76,9 +132,9 @@ function dotString(value: string): string {
  * rendered by Graphviz or consumed by other visualization tools without
  * requiring access to the analyzed project.
  */
-export function renderModuleGraphDot(snapshot: Pick<ArchitectureSnapshot, "architecture">): string {
-  const { modules, moduleEdges, cycles } = snapshot.architecture;
-  const cycleModules = new Set(cycles.flatMap((cycle) => cycle.modules));
+export function renderModuleGraphDot(snapshot: Pick<ArchitectureSnapshot, "architecture" | "analysis">): string {
+  const { modules, moduleEdges } = snapshot.architecture;
+  const cycleModules = new Set(snapshot.analysis.cycles.flatMap((cycle) => cycle.modules));
   const lines = [
     "digraph architecture {",
     "  rankdir=LR;",
@@ -87,7 +143,7 @@ export function renderModuleGraphDot(snapshot: Pick<ArchitectureSnapshot, "archi
     '  edge [fontname="sans-serif"];',
   ];
 
-  for (const module of [...modules].sort((a, b) => a.id.localeCompare(b.id))) {
+  for (const module of [...modules].sort((a, b) => compare(a.id, b.id))) {
     const attributes = [
       `label=${dotString(`${module.id}\n${module.files.length} file${module.files.length === 1 ? "" : "s"}`)}`,
     ];
@@ -97,7 +153,7 @@ export function renderModuleGraphDot(snapshot: Pick<ArchitectureSnapshot, "archi
     lines.push(`  ${dotString(module.id)} [${attributes.join(", ")}];`);
   }
 
-  for (const edge of [...moduleEdges].sort((a, b) => `${a.from}\0${a.to}`.localeCompare(`${b.from}\0${b.to}`))) {
+  for (const edge of [...moduleEdges].sort((a, b) => compare(a.id, b.id))) {
     const publicApi =
       edge.publicApiImports === edge.imports ? "public API" : `${edge.publicApiImports}/${edge.imports} public API`;
     lines.push(

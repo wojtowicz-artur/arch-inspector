@@ -93,11 +93,22 @@ export function inferModules(project: DiscoveredProject): {
       .sort();
     return {
       id,
-      kind: "inferred",
       root: relativeToRoot(project.root, root),
       files: files.map((file) => relativeToRoot(project.root, file)).sort(),
       entrypoints: configuredEntrypoints ?? inferredEntrypoints,
-      provenance: { origin: explicitModules.some((module) => module.id === id) ? "config" : "inferred" },
+      provenance: {
+        origin: explicitModules.some((module) => module.id === id) ? "declared" : "inferred",
+        analyzer: "module-inference",
+        ...(explicitModules.some((module) => module.id === id)
+          ? { evidence: [{ kind: "config" as const, id: `module:${id}` }] }
+          : {
+              evidence: files.map((file) => ({
+                kind: "file" as const,
+                id: relativeToRoot(project.root, file),
+                file: relativeToRoot(project.root, file),
+              })),
+            }),
+      },
     };
   });
 

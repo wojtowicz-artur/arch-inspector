@@ -10,18 +10,20 @@ test("builds a deterministic architecture snapshot from a TypeScript project", (
     const second = analyzeProject(project.root);
 
     assert.equal(JSON.stringify(first), JSON.stringify(second));
-    assert.equal(first.irVersion, "0.2");
+    assert.equal(first.irVersion, "0.3");
     assert.deepEqual(
       first.architecture.modules.map((module) => module.id),
       ["admin", "booking", "calendar", "shared"],
     );
-    assert.equal(first.architecture.metrics.sourceFiles, 6);
-    assert.ok(first.architecture.metrics.internalImports >= 5);
-    assert.ok(first.architecture.metrics.externalImports >= 0);
-    assert.equal(first.source.provenance.origin, "source");
+    assert.equal(first.analysis.metrics.sourceFiles, 6);
+    assert.ok(first.analysis.metrics.internalImports >= 5);
+    assert.ok(first.analysis.metrics.externalImports >= 0);
+    assert.equal(first.source.provenance.origin, "observed");
     assert.equal(first.architecture.provenance.origin, "derived");
-    assert.equal(first.source.files[0].provenance.origin, "source");
+    assert.equal(first.source.files[0].provenance.origin, "observed");
     assert.equal(first.architecture.modules.find((module) => module.id === "booking")?.provenance.origin, "inferred");
+    assert.equal(first.receipt.snapshotId.length, 64);
+    assert.equal(first.receipt.snapshotId, second.receipt.snapshotId);
   } finally {
     project.cleanup();
   }
@@ -31,16 +33,19 @@ test("resolves path aliases and reports cycles and deep imports", () => {
   const project = createSampleProject();
   try {
     const snapshot = analyzeProject(project.root);
-    const aliasEdge = snapshot.source.edges.find((edge) => edge.specifier === "@modules/booking");
+    const aliasEdge = snapshot.source.imports.find((edge) => edge.specifier === "@modules/booking");
     assert.equal(aliasEdge?.resolution, "internal");
-    assert.equal(aliasEdge?.publicApi, true);
-    assert.ok(
-      snapshot.architecture.cycles.some(
-        (cycle) => cycle.modules.includes("booking") && cycle.modules.includes("calendar"),
-      ),
+    assert.equal(aliasEdge?.toFile, "src/modules/booking/index.ts");
+    assert.equal(
+      snapshot.architecture.moduleEdges.find((edge) => edge.from === "admin" && edge.to === "booking")
+        ?.publicApiImports,
+      1,
     );
-    assert.ok(snapshot.architecture.diagnostics.some((diagnostic) => diagnostic.code === "architecture/deep-import"));
-    assert.ok(snapshot.architecture.diagnostics.some((diagnostic) => diagnostic.code === "architecture/cycle"));
+    assert.ok(
+      snapshot.analysis.cycles.some((cycle) => cycle.modules.includes("booking") && cycle.modules.includes("calendar")),
+    );
+    assert.ok(snapshot.analysis.findings.some((finding) => finding.code === "architecture/deep-import"));
+    assert.ok(snapshot.analysis.findings.some((finding) => finding.code === "architecture/cycle"));
   } finally {
     project.cleanup();
   }
@@ -51,7 +56,7 @@ test("applies analysis scope and configured public entrypoints", () => {
   try {
     const snapshot = analyzeProject(project.root);
 
-    assert.equal(snapshot.architecture.metrics.sourceFiles, 3);
+    assert.equal(snapshot.analysis.metrics.sourceFiles, 3);
     assert.deepEqual(
       snapshot.source.files.map((file) => file.path),
       ["src/consumer.ts", "src/modules/booking/internal.ts", "src/modules/booking/public.ts"],
@@ -63,13 +68,17 @@ test("applies analysis scope and configured public entrypoints", () => {
     assert.deepEqual(snapshot.architecture.modules.find((module) => module.id === "booking")?.entrypoints, [
       "src/modules/booking/public.ts",
     ]);
-    assert.equal(snapshot.architecture.metrics.assetImports, 1);
-    assert.equal(snapshot.architecture.metrics.unresolvedImports, 0);
+    assert.equal(snapshot.analysis.metrics.assetImports, 1);
+    assert.equal(snapshot.analysis.metrics.unresolvedImports, 0);
+    assert.equal(snapshot.analysis.findings.filter((finding) => finding.code === "architecture/deep-import").length, 1);
     assert.equal(
-      snapshot.architecture.diagnostics.filter((diagnostic) => diagnostic.code === "architecture/deep-import").length,
-      1,
+      snapshot.architecture.modules.find((module) => module.id === "booking")?.provenance.origin,
+      "declared",
     );
-    assert.equal(snapshot.architecture.modules.find((module) => module.id === "booking")?.provenance.origin, "config");
+    assert.equal(
+      snapshot.architecture.ownership.find((entry) => entry.file.endsWith("booking/internal.ts"))?.module,
+      "booking",
+    );
   } finally {
     project.cleanup();
   }

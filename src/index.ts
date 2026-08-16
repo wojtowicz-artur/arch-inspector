@@ -7,27 +7,32 @@
  */
 export { analyzeProject } from "./analyzer.js";
 export { analyzeGitRef } from "./git.js";
-export { diffSnapshots, loadSnapshot } from "./diff.js";
+export { diffSnapshots, loadSnapshot, SnapshotComparisonError } from "./diff.js";
 export { renderModuleGraphDot } from "./graph.js";
-export { IR_VERSION } from "./ir.js";
+export { IR_VERSION, TOOL_VERSION } from "./ir.js";
 
 export type {
-  ArchitectureDiagnostic,
+  AnalysisFacts,
   ArchitectureCycle,
-  ArchitectureFacts,
-  ArchitectureEdge,
-  ArchitectureFile,
+  ArchitectureFinding,
   ArchitectureMetrics,
   ArchitectureModule,
   ArchitectureSnapshot,
   DiagnosticCategory,
   DiagnosticLevel,
+  EvidenceKind,
+  EvidenceRef,
   FactOrigin,
+  FileOwnership,
   ImportKind,
   ModuleEdge,
   Provenance,
   Resolution,
+  SnapshotPolicy,
+  SnapshotReceipt,
+  SourceFile,
   SourceFacts,
+  SourceImport,
 } from "./ir.js";
 
 export type { ArchitectureDiff, CollectionDiff, MetricDelta } from "./diff.js";

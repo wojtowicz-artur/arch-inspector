@@ -1,6 +1,6 @@
 import path from "node:path";
 import ts from "typescript";
-import type { ArchitectureEdge, ImportKind } from "./ir.js";
+import type { ImportKind, SourceImport } from "./ir.js";
 import { relativeToRoot, type DiscoveredProject } from "./project.js";
 
 interface RawImport {
@@ -60,18 +60,15 @@ function isAssetSpecifier(specifier: string): boolean {
   );
 }
 
-export function collectEdges(
-  project: DiscoveredProject,
-  fileToModule: Map<string, string>,
-  moduleEntrypoints: Map<string, Set<string>>,
-): ArchitectureEdge[] {
+export function collectEdges(project: DiscoveredProject): SourceImport[] {
   const projectFiles = new Set(project.files.map((file) => path.normalize(file)));
-  const edges: ArchitectureEdge[] = [];
+  const edges: SourceImport[] = [];
 
   for (const file of project.files) {
     const text = ts.sys.readFile(file) ?? "";
     const sourceFile = sourceFileFor(file, text);
     const imports = collectImports(sourceFile);
+    const occurrences = new Map<string, number>();
     for (const current of imports) {
       const resolved = ts.resolveModuleName(current.specifier, file, project.compilerOptions, ts.sys).resolvedModule;
       const resolvedFile = resolved ? path.normalize(resolved.resolvedFileName) : undefined;
@@ -85,26 +82,32 @@ export function collectEdges(
           : resolvedFile || isBuiltin(current.specifier) || !isLocalLike(current.specifier)
             ? "external"
             : "unresolved";
-      const fromModule = fileToModule.get(file)!;
-      const toModule = internal ? fileToModule.get(resolvedFile!) : undefined;
-      const targetEntrypoints = toModule ? moduleEntrypoints.get(toModule) : undefined;
-      const publicApi = internal && targetEntrypoints?.has(resolvedFile!) === true;
       const location = sourceFile.getLineAndCharacterOfPosition(current.position);
       const fromFile = relativeToRoot(project.root, file);
       const toFile = internal ? relativeToRoot(project.root, resolvedFile!) : undefined;
+      const occurrenceKey = [
+        fromFile,
+        toFile ?? "",
+        current.kind,
+        current.specifier,
+        current.typeOnly ? "type" : "value",
+      ].join("\0");
+      const occurrence = occurrences.get(occurrenceKey) ?? 0;
+      occurrences.set(occurrenceKey, occurrence + 1);
       edges.push({
-        id: `${fromFile}:${location.line + 1}:${location.character + 1}:${current.kind}:${current.specifier}`,
+        id: `${occurrenceKey}\0${occurrence}`,
         fromFile,
         ...(toFile ? { toFile } : {}),
-        fromModule,
-        ...(toModule ? { toModule } : {}),
         specifier: current.specifier,
         importKind: current.kind,
         resolution,
         typeOnly: current.typeOnly,
-        publicApi,
         location: { line: location.line + 1, column: location.character + 1 },
-        provenance: { origin: "source" },
+        provenance: {
+          origin: "observed",
+          analyzer: "typescript-import-resolver",
+          evidence: [{ kind: "file", id: fromFile, file: fromFile, line: location.line + 1 }],
+        },
       });
     }
   }

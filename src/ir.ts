@@ -1,43 +1,61 @@
-export const IR_VERSION = "0.2" as const;
+export const IR_VERSION = "0.3" as const;
+export const TOOL_VERSION = "0.3.0" as const;
 
 export type Resolution = "internal" | "external" | "asset" | "unresolved";
 export type ImportKind = "static" | "export" | "dynamic" | "require";
 export type DiagnosticLevel = "error" | "warning" | "info";
 export type DiagnosticCategory = "violation" | "observation";
-export type FactOrigin = "source" | "config" | "inferred" | "derived";
+export type FactOrigin = "observed" | "declared" | "inferred" | "derived";
+
+export type EvidenceKind = "file" | "source-edge" | "module" | "module-edge" | "config" | "rule";
+
+export interface EvidenceRef {
+  kind: EvidenceKind;
+  id: string;
+  file?: string;
+  line?: number;
+}
 
 export interface Provenance {
   origin: FactOrigin;
+  analyzer?: string;
+  rule?: string;
+  evidence?: EvidenceRef[];
+  derivedFrom?: string[];
 }
 
-export interface ArchitectureFile {
+export interface SnapshotReceipt {
+  snapshotId: string;
+  tool: "arch-inspector";
+  toolVersion: typeof TOOL_VERSION;
+  irVersion: typeof IR_VERSION;
+  configHash: string;
+  compilerOptionsHash: string;
+  inputHash: string;
+}
+
+export interface SnapshotPolicy {
+  failOn: string[];
+  provenance: Provenance;
+}
+
+/** A fact emitted directly from the source tree and resolver. */
+export interface SourceFile {
   path: string;
-  moduleId: string;
   language: "typescript" | "javascript";
   lines: number;
   provenance: Provenance;
 }
 
-export interface ArchitectureModule {
-  id: string;
-  kind: "inferred";
-  root: string;
-  files: string[];
-  entrypoints: string[];
-  provenance: Provenance;
-}
-
-export interface ArchitectureEdge {
+/** A raw import edge. Module ownership and public API are architecture projections. */
+export interface SourceImport {
   id: string;
   fromFile: string;
   toFile?: string;
-  fromModule: string;
-  toModule?: string;
   specifier: string;
   importKind: ImportKind;
   resolution: Resolution;
   typeOnly: boolean;
-  publicApi: boolean;
   location: {
     line: number;
     column: number;
@@ -45,29 +63,50 @@ export interface ArchitectureEdge {
   provenance: Provenance;
 }
 
+export interface SourceFacts {
+  files: SourceFile[];
+  imports: SourceImport[];
+  provenance: Provenance;
+}
+
+export interface ArchitectureModule {
+  id: string;
+  root: string;
+  files: string[];
+  entrypoints: string[];
+  provenance: Provenance;
+}
+
+export interface FileOwnership {
+  file: string;
+  module: string;
+  provenance: Provenance;
+}
+
 export interface ModuleEdge {
+  id: string;
   from: string;
   to: string;
   imports: number;
   publicApiImports: number;
+  deepImports: number;
   files: string[];
+  sourceEdgeIds: string[];
+  visibility: "public" | "deep" | "mixed";
   provenance: Provenance;
 }
 
-export interface ArchitectureDiagnostic {
-  code: string;
-  category: DiagnosticCategory;
-  level: DiagnosticLevel;
-  message: string;
-  file?: string;
-  line?: number;
-  related?: string[];
-  data?: Record<string, unknown>;
+export interface ArchitectureFacts {
+  modules: ArchitectureModule[];
+  ownership: FileOwnership[];
+  moduleEdges: ModuleEdge[];
   provenance: Provenance;
 }
 
 export interface ArchitectureCycle {
+  id: string;
   modules: string[];
+  edgeIds: string[];
   provenance: Provenance;
 }
 
@@ -87,28 +126,35 @@ export interface ArchitectureMetrics {
   provenance: Provenance;
 }
 
-export interface SourceFacts {
-  files: ArchitectureFile[];
-  edges: ArchitectureEdge[];
+export interface ArchitectureFinding {
+  code: string;
+  category: DiagnosticCategory;
+  level: DiagnosticLevel;
+  message: string;
+  file?: string;
+  line?: number;
+  related?: string[];
+  data?: Record<string, unknown>;
   provenance: Provenance;
 }
 
-export interface ArchitectureFacts {
-  modules: ArchitectureModule[];
-  moduleEdges: ModuleEdge[];
+export interface AnalysisFacts {
   cycles: ArchitectureCycle[];
   metrics: ArchitectureMetrics;
-  diagnostics: ArchitectureDiagnostic[];
+  findings: ArchitectureFinding[];
   provenance: Provenance;
 }
 
 export interface ArchitectureSnapshot {
   irVersion: typeof IR_VERSION;
+  receipt: SnapshotReceipt;
   project: {
     root: string;
     tsconfig: string;
     sourceRoot: string;
   };
+  policy: SnapshotPolicy;
   source: SourceFacts;
   architecture: ArchitectureFacts;
+  analysis: AnalysisFacts;
 }
