@@ -1,0 +1,31 @@
+{
+  "name": "arch-inspector",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "description": "A small, deterministic TypeScript architecture inspector.",
+  "main": "./dist/src/index.js",
+  "types": "./dist/src/index.d.ts",
+  "exports": {
+    ".": {
+      "types": "./dist/src/index.d.ts",
+      "import": "./dist/src/index.js"
+    },
+    "./cli": "./dist/src/cli.js"
+  },
+  "bin": {
+    "arch": "./dist/src/cli.js"
+  },
+  "scripts": {
+    "build": "tsc -p tsconfig.json",
+    "test": "npm run build && node --test dist/test/*.test.js",
+    "inspect": "npm run build && node dist/src/cli.js inspect",
+    "check": "npm run build && node dist/src/cli.js check"
+  },
+  "dependencies": {
+    "typescript": "^5.8.3"
+  },
+  "devDependencies": {
+    "@types/node": "^22.15.3"
+  }
+}
