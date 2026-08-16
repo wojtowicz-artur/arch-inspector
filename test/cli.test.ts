@@ -65,3 +65,20 @@ test("audit gates only architecture violations introduced after a saved snapshot
     project.cleanup();
   }
 });
+
+test("emits a machine-readable error envelope for JSON CLI failures", () => {
+  const project = createProject({
+    archConfig: { noCycles: "yes" },
+    files: { "src/app.ts": "export const app = true;\n" },
+  });
+  try {
+    const result = spawnSync(process.execPath, [cliPath, "check", project.root, "--json"], { encoding: "utf8" });
+    assert.equal(result.status, 2);
+    const payload = JSON.parse(result.stdout) as { error: boolean; code: string; message: string };
+    assert.equal(payload.error, true);
+    assert.equal(payload.code, "ANALYSIS_ERROR");
+    assert.match(payload.message, /Invalid arch\.config\.json/);
+  } finally {
+    project.cleanup();
+  }
+});

@@ -176,7 +176,13 @@ export function diffSnapshots(
   );
   const ownership = diffCollection(before.architecture.ownership, after.architecture.ownership, (entry) => entry.file);
   const files = diffCollection(before.source.files, after.source.files, (file) => file.path);
-  const imports = diffCollection(before.source.imports, after.source.imports, (edge) => edge.id, (edge) => edge.id, comparableImport);
+  const imports = diffCollection(
+    before.source.imports,
+    after.source.imports,
+    (edge) => edge.id,
+    (edge) => edge.id,
+    comparableImport,
+  );
   const moduleEdges = diffCollection(
     before.architecture.moduleEdges,
     after.architecture.moduleEdges,
