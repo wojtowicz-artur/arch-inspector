@@ -1,6 +1,6 @@
 export const IR_VERSION = "0.1" as const;
 
-export type Resolution = "internal" | "external" | "unresolved";
+export type Resolution = "internal" | "external" | "asset" | "unresolved";
 export type ImportKind = "static" | "export" | "dynamic" | "require";
 export type DiagnosticLevel = "error" | "warning" | "info";
 export type DiagnosticCategory = "violation" | "observation";
@@ -62,6 +62,7 @@ export interface ArchitectureMetrics {
   imports: number;
   internalImports: number;
   externalImports: number;
+  assetImports: number;
   unresolvedImports: number;
   moduleEdges: number;
   cycles: number;

@@ -44,6 +44,11 @@ function isLocalLike(specifier: string): boolean {
   return specifier.startsWith(".") || specifier.startsWith("/") || specifier.startsWith("#");
 }
 
+function isAssetSpecifier(specifier: string): boolean {
+  const withoutQuery = specifier.split(/[?#]/, 1)[0].toLowerCase();
+  return /\.(?:css|scss|sass|less|styl|pcss|svg|png|jpe?g|gif|webp|avif|ico|woff2?|ttf|eot|mp4|webm|mp3|wav)$/.test(withoutQuery);
+}
+
 export function collectEdges(
   project: DiscoveredProject,
   fileToModule: Map<string, string>,
@@ -60,7 +65,8 @@ export function collectEdges(
       const resolved = ts.resolveModuleName(current.specifier, file, project.compilerOptions, ts.sys).resolvedModule;
       const resolvedFile = resolved ? path.normalize(resolved.resolvedFileName) : undefined;
       const internal = resolvedFile !== undefined && projectFiles.has(resolvedFile);
-      const resolution = internal ? "internal" : resolvedFile || isBuiltin(current.specifier) || !isLocalLike(current.specifier) ? "external" : "unresolved";
+      const asset = isAssetSpecifier(current.specifier) || (resolvedFile !== undefined && isAssetSpecifier(resolvedFile));
+      const resolution = internal ? "internal" : asset ? "asset" : resolvedFile || isBuiltin(current.specifier) || !isLocalLike(current.specifier) ? "external" : "unresolved";
       const fromModule = fileToModule.get(file)!;
       const toModule = internal ? fileToModule.get(resolvedFile!) : undefined;
       const targetEntrypoints = toModule ? moduleEntrypoints.get(toModule) : undefined;

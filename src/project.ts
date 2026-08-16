@@ -3,7 +3,18 @@ import path from "node:path";
 import ts from "typescript";
 
 export interface InspectorConfig {
+  /** Paths are relative to the directory containing tsconfig.json. */
+  include?: string[];
+  /** Additional paths to ignore. Generated directories are ignored by default. */
+  exclude?: string[];
   moduleRoots?: string[];
+  /** Explicit module declarations for projects whose boundaries are not folder-conventional. */
+  modules?: Record<string, {
+    root: string;
+    publicEntrypoints?: string[];
+  }>;
+  /** Maps inferred module ids to files which form their public API. */
+  publicEntrypoints?: Record<string, string[]>;
   noCycles?: boolean;
   noDeepImports?: boolean;
   forbiddenDependencies?: Array<{
@@ -66,9 +77,64 @@ function isSourceFile(file: string): boolean {
   return /\.(?:tsx?|mts|cts|jsx?|mjs|cjs)$/i.test(file) && !file.endsWith(".d.ts");
 }
 
+const DEFAULT_EXCLUDES = [
+  "node_modules/**",
+  ".next/**",
+  "dist/**",
+  "build/**",
+  "coverage/**",
+  ".turbo/**",
+  ".cache/**",
+];
+
+function globToRegExp(pattern: string): RegExp {
+  const normalized = pattern.replaceAll("\\", "/").replace(/^\.\//, "");
+  let expression = "^";
+  for (let index = 0; index < normalized.length; index += 1) {
+    const character = normalized[index];
+    if (character === "*" && normalized[index + 1] === "*") {
+      if (normalized[index + 2] === "/") {
+        expression += "(?:.*/)?";
+        index += 2;
+      } else {
+        expression += ".*";
+        index += 1;
+      }
+    } else if (character === "*") {
+      expression += "[^/]*";
+    } else if (character === "?") {
+      expression += "[^/]";
+    } else {
+      expression += character.replace(/[.+^${}()|[\]\\]/g, "\\$&");
+    }
+  }
+  return new RegExp(`${expression}$`);
+}
+
+function matchesGlob(relativePath: string, pattern: string): boolean {
+  const normalizedPattern = pattern.replaceAll("\\", "/").replace(/^\.\//, "");
+  const normalizedPath = relativePath.replaceAll("\\", "/");
+  const direct = globToRegExp(normalizedPattern).test(normalizedPath);
+  // A directory-like pattern such as `src` is useful shorthand for `src/**`.
+  if (direct || /[*?]/.test(normalizedPattern)) return direct;
+  return globToRegExp(`${normalizedPattern}/**`).test(normalizedPath);
+}
+
+function filterProjectFiles(root: string, files: string[], config: InspectorConfig): string[] {
+  const include = config.include?.length ? config.include : undefined;
+  const exclude = [...DEFAULT_EXCLUDES, ...(config.exclude ?? [])];
+  return files.filter((file) => {
+    const relative = relativeToRoot(root, file);
+    const included = include ? include.some((pattern) => matchesGlob(relative, pattern)) : true;
+    const excluded = exclude.some((pattern) => matchesGlob(relative, pattern));
+    return included && !excluded;
+  });
+}
+
 export function discoverProject(inputPath = "."): DiscoveredProject {
   const tsconfigPath = findTsconfig(inputPath);
   const root = path.dirname(tsconfigPath);
+  const config = readInspectorConfig(root);
   const visited = new Set<string>();
   const referencedFiles: string[] = [];
   let compilerOptions: ts.CompilerOptions = {};
@@ -97,7 +163,7 @@ export function discoverProject(inputPath = "."): DiscoveredProject {
   };
 
   readConfig(tsconfigPath);
-  const files = [...new Set(referencedFiles)].sort();
+  const files = filterProjectFiles(root, [...new Set(referencedFiles)].sort(), config);
   const sourceRoot = normalize(compilerOptions.rootDir ?? path.join(root, files.some((file) => file.includes(`${path.sep}src${path.sep}`)) ? "src" : path.relative(root, commonDirectory(files))));
 
   return {
@@ -106,7 +172,7 @@ export function discoverProject(inputPath = "."): DiscoveredProject {
     sourceRoot,
     compilerOptions,
     files,
-    config: readInspectorConfig(root),
+    config,
   };
 }
 

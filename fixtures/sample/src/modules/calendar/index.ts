@@ -1,1 +1,0 @@
-export { calendarName } from "./internal";

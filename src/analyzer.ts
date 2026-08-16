@@ -34,6 +34,7 @@ function metrics(project: DiscoveredProject, modules: ArchitectureSnapshot["modu
     imports: edges.length,
     internalImports: edges.filter((edge) => edge.resolution === "internal").length,
     externalImports: edges.filter((edge) => edge.resolution === "external").length,
+    assetImports: edges.filter((edge) => edge.resolution === "asset").length,
     unresolvedImports: edges.filter((edge) => edge.resolution === "unresolved").length,
     moduleEdges: moduleEdges.length,
     cycles: cycles.length,

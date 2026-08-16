@@ -59,7 +59,7 @@ function renderText(snapshot: ArchitectureSnapshot): string {
     `Project: ${snapshot.project.root}`,
     `Files: ${snapshot.metrics.sourceFiles}`,
     `Modules: ${snapshot.metrics.modules}`,
-    `Imports: ${snapshot.metrics.imports} (${snapshot.metrics.internalImports} internal, ${snapshot.metrics.externalImports} external, ${snapshot.metrics.unresolvedImports} unresolved)`,
+    `Imports: ${snapshot.metrics.imports} (${snapshot.metrics.internalImports} internal, ${snapshot.metrics.externalImports} external, ${snapshot.metrics.assetImports} assets, ${snapshot.metrics.unresolvedImports} unresolved)`,
     `Module edges: ${snapshot.metrics.moduleEdges}`,
     `Cycles: ${snapshot.metrics.cycles}`,
     `Deep imports: ${snapshot.metrics.deepImports}`,

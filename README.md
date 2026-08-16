@@ -51,7 +51,14 @@ Konfiguracja opcjonalna: `arch.config.json` w katalogu projektu:
 
 ```json
 {
-  "moduleRoots": ["src/modules"],
+  "include": ["src/**"],
+  "exclude": ["src/legacy/**"],
+  "modules": {
+    "booking": {
+      "root": "src/modules/booking",
+      "publicEntrypoints": ["src/modules/booking/public-api.ts"]
+    }
+  },
   "noCycles": true,
   "noDeepImports": true,
   "forbiddenDependencies": [
@@ -59,6 +66,8 @@ Konfiguracja opcjonalna: `arch.config.json` w katalogu projektu:
   ]
 }
 ```
+
+Domyślnie inspector pomija artefakty `node_modules`, `.next`, `dist`, `build`, `coverage`, `.turbo` i `.cache`. `include` oraz `exclude` odnoszą się do ścieżek względnych względem katalogu z `tsconfig.json`. `modules` pozwala opisać moduły, które nie mają fizycznego `index.ts`. Importy CSS/SCSS, obrazów i fontów są raportowane jako `asset`, a nie jako błędne `unresolved`.
 
 To jeszcze nie jest framework ani pełny system kontraktów. IR jest granicą, za którą można później wymienić analyzer, dodać diff Git i jawne deklaracje modułów bez zmiany konsumentów danych.
 

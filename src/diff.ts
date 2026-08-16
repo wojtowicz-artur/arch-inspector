@@ -93,6 +93,7 @@ function metricDeltas(before: ArchitectureSnapshot, after: ArchitectureSnapshot)
     "imports",
     "internalImports",
     "externalImports",
+    "assetImports",
     "unresolvedImports",
     "moduleEdges",
     "cycles",
