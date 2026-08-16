@@ -43,9 +43,15 @@ npm test
 npm run build
 node dist/src/cli.js inspect ../ścieżka/do/projektu
 node dist/src/cli.js inspect ../ścieżka/do/projektu --json --out architecture.json
+node dist/src/cli.js graph ../ścieżka/do/projektu --out architecture.dot
 node dist/src/cli.js check ../ścieżka/do/projektu
 node dist/src/cli.js diff main ../ścieżka/do/projektu --check
 ```
+
+`arch graph` emituje deterministyczny graf modułów w formacie Graphviz DOT. Węzły
+uczestniczące w cyklu są wyróżnione, a etykiety krawędzi pokazują liczbę
+importów i udział importów przez publiczne API. Flaga `--json` zachowuje pełny
+snapshot IR zamiast formatu DOT.
 
 Konfiguracja opcjonalna: `arch.config.json` w katalogu projektu:
 

@@ -8,6 +8,7 @@
 export { analyzeProject } from "./analyzer.js";
 export { analyzeGitRef } from "./git.js";
 export { diffSnapshots, loadSnapshot } from "./diff.js";
+export { renderModuleGraphDot } from "./graph.js";
 export { IR_VERSION } from "./ir.js";
 
 export type {

@@ -4,12 +4,13 @@ import path from "node:path";
 import { analyzeProject } from "./analyzer.js";
 import { diffSnapshots, loadSnapshot, type ArchitectureDiff } from "./diff.js";
 import { analyzeGitRef } from "./git.js";
+import { renderModuleGraphDot } from "./graph.js";
 import type { ArchitectureSnapshot, ArchitectureDiagnostic, ArchitectureEdge } from "./ir.js";
 
 function usage(): string {
   return `Usage:
   arch inspect [project] [--json] [--out <file>]
-  arch graph [project] [--json] [--out <file>]
+  arch graph [project] [--json] [--out <file>]  # Graphviz DOT by default
   arch check [project] [--json] [--out <file>]
   arch diff <git-ref|snapshot.json> [project] [--json] [--out <file>] [--check]
 
@@ -139,10 +140,19 @@ function main(): void {
     return;
   }
   const snapshot = inspectSnapshot(parsed.project);
-  const output = parsed.json ? `${JSON.stringify(snapshot, null, 2)}\n` : `${renderText(snapshot)}\n`;
-  if (parsed.out) fs.writeFileSync(path.resolve(parsed.out), JSON.stringify(snapshot, null, 2) + "\n", "utf8");
+  const output = parsed.json
+    ? `${JSON.stringify(snapshot, null, 2)}\n`
+    : parsed.command === "graph"
+    ? renderModuleGraphDot(snapshot)
+    : `${renderText(snapshot)}\n`;
+  if (parsed.out) {
+    const fileContents = parsed.json || parsed.command !== "graph"
+      ? JSON.stringify(snapshot, null, 2) + "\n"
+      : output;
+    fs.writeFileSync(path.resolve(parsed.out), fileContents, "utf8");
+  }
   process.stdout.write(output);
-  if (parsed.command === "check" && snapshot.diagnostics.some((diagnostic) => diagnostic.category === "violation" && diagnostic.level === "error")) process.exitCode = 1;
+  if (parsed.command === "check" && snapshot.diagnostics.some((diagnostic) => diagnostic.category === "violation")) process.exitCode = 1;
 }
 
 try {

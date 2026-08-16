@@ -1,4 +1,4 @@
-import type { ArchitectureEdge, ArchitectureModule, ModuleEdge } from "./ir.js";
+import type { ArchitectureEdge, ArchitectureModule, ArchitectureSnapshot, ModuleEdge } from "./ir.js";
 
 export function buildModuleEdges(edges: ArchitectureEdge[]): ModuleEdge[] {
   const grouped = new Map<string, ModuleEdge>();
@@ -54,4 +54,42 @@ export function findCycles(modules: ArchitectureModule[], moduleEdges: ModuleEdg
 
   for (const module of modules) if (!indices.has(module.id)) visit(module.id);
   return components.sort((a, b) => a.join("\0").localeCompare(b.join("\0")));
+}
+
+function dotString(value: string): string {
+  return `"${value.replaceAll("\\", "\\\\").replaceAll("\"", '\\"').replaceAll("\n", "\\n")}"`;
+}
+
+/**
+ * Render the module graph as deterministic Graphviz DOT.
+ *
+ * The output intentionally uses only the Architecture IR, so it can be
+ * rendered by Graphviz or consumed by other visualization tools without
+ * requiring access to the analyzed project.
+ */
+export function renderModuleGraphDot(snapshot: Pick<ArchitectureSnapshot, "modules" | "moduleEdges" | "cycles">): string {
+  const cycleModules = new Set(snapshot.cycles.flat());
+  const lines = [
+    "digraph architecture {",
+    "  rankdir=LR;",
+    "  graph [fontname=\"sans-serif\", bgcolor=\"transparent\"];",
+    "  node [shape=box, fontname=\"sans-serif\"];",
+    "  edge [fontname=\"sans-serif\"];",
+  ];
+
+  for (const module of [...snapshot.modules].sort((a, b) => a.id.localeCompare(b.id))) {
+    const attributes = [`label=${dotString(`${module.id}\n${module.files.length} file${module.files.length === 1 ? "" : "s"}`)}`];
+    if (cycleModules.has(module.id)) {
+      attributes.push("color=\"#dc2626\"", "penwidth=\"2\"");
+    }
+    lines.push(`  ${dotString(module.id)} [${attributes.join(", ")}];`);
+  }
+
+  for (const edge of [...snapshot.moduleEdges].sort((a, b) => `${a.from}\0${a.to}`.localeCompare(`${b.from}\0${b.to}`))) {
+    const publicApi = edge.publicApiImports === edge.imports ? "public API" : `${edge.publicApiImports}/${edge.imports} public API`;
+    lines.push(`  ${dotString(edge.from)} -> ${dotString(edge.to)} [label=${dotString(`${edge.imports} (${publicApi})`)}];`);
+  }
+
+  lines.push("}");
+  return `${lines.join("\n")}\n`;
 }
