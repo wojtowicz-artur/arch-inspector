@@ -69,6 +69,7 @@ function diffCollection<T>(
   after: T[],
   key: (value: T) => string,
   afterKey: (value: T) => string = key,
+  comparable: (value: T) => unknown = (value) => value,
 ): CollectionDiff<T> {
   const beforeMap = new Map(before.map((value) => [key(value), value]));
   const afterMap = new Map(after.map((value) => [afterKey(value), value]));
@@ -84,7 +85,8 @@ function diffCollection<T>(
     changed: [...afterMap.entries()]
       .filter(
         ([entryKey, value]) =>
-          beforeMap.has(entryKey) && canonicalStringify(beforeMap.get(entryKey)) !== canonicalStringify(value),
+          beforeMap.has(entryKey) &&
+          canonicalStringify(comparable(beforeMap.get(entryKey)!)) !== canonicalStringify(comparable(value)),
       )
       .sort(([left], [right]) => compare(left, right))
       .map(([entryKey, value]) => ({ before: beforeMap.get(entryKey)!, after: value })),
@@ -116,6 +118,16 @@ function metricDeltas(before: ArchitectureSnapshot, after: ArchitectureSnapshot)
 
 function stableModuleKey(module: ArchitectureModule): string {
   return module.stableId ?? module.root ?? module.id;
+}
+
+function comparableModule(module: ArchitectureModule): unknown {
+  const { stableId: _stableId, ...withoutCompatibilityMetadata } = module;
+  return withoutCompatibilityMetadata;
+}
+
+function comparableImport(edge: SourceImport): unknown {
+  const { resolutionConfidence: _resolutionConfidence, ...withoutCompatibilityMetadata } = edge;
+  return withoutCompatibilityMetadata;
 }
 
 function moduleKeyMap(snapshot: ArchitectureSnapshot): Map<string, string> {
@@ -160,10 +172,11 @@ export function diffSnapshots(
     after.architecture.modules,
     stableModuleKey,
     stableModuleKey,
+    comparableModule,
   );
   const ownership = diffCollection(before.architecture.ownership, after.architecture.ownership, (entry) => entry.file);
   const files = diffCollection(before.source.files, after.source.files, (file) => file.path);
-  const imports = diffCollection(before.source.imports, after.source.imports, (edge) => edge.id);
+  const imports = diffCollection(before.source.imports, after.source.imports, (edge) => edge.id, (edge) => edge.id, comparableImport);
   const moduleEdges = diffCollection(
     before.architecture.moduleEdges,
     after.architecture.moduleEdges,

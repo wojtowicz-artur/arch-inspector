@@ -43,6 +43,7 @@ node dist/src/cli.js diff main .
 # jawnie włącz politykę failowania w CI
 node dist/src/cli.js diff main . --check
 node dist/src/cli.js diff main . --check --fail-on cycles,deep-imports
+node dist/src/cli.js audit main .
 ```
 
 Diff pokazuje dodane/usunięte moduły, ownership plików, importy, zależności,
@@ -65,12 +66,17 @@ node dist/src/cli.js graph ../ścieżka/do/projektu --out architecture.dot
 node dist/src/cli.js check ../ścieżka/do/projektu
 node dist/src/cli.js check ../ścieżka/do/projektu --fail-on cycles,deep-imports
 node dist/src/cli.js diff main ../ścieżka/do/projektu --check
+node dist/src/cli.js audit main ../ścieżka/do/projektu
 ```
 
 `arch check` jest report-only, jeśli nie podano `--fail-on` i projekt nie ma
 polityki `failOn` w konfiguracji. `--check` przy `arch diff` jest jawnym żądaniem
 failowania na wprowadzonych naruszeniach; brak porównywalności kończy się kodem
 wyjścia `3`.
+`arch audit` jest skrótem dla changed-architecture gate: porównuje z bazowym
+snapshotem/refem i domyślnie kończy się kodem `1`, gdy wprowadzono naruszenie.
+Błędy analizy kończą się kodem `2`; przy `--json` są emitowane jako pojedynczy
+JSON envelope zamiast tekstu diagnostycznego.
 
 Formatowanie zapewnia Oxfmt (`npm run format`), a lintowanie Oxlint
 (`npm run lint`). Konfiguracje znajdują się w `.oxfmtrc.json` i

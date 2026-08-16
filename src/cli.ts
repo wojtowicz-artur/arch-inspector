@@ -256,6 +256,17 @@ function main(): void {
 try {
   main();
 } catch (error) {
-  console.error(error instanceof Error ? error.message : error);
-  process.exitCode = error instanceof SnapshotComparisonError ? 3 : 1;
+  const message = error instanceof Error ? error.message : String(error);
+  const exitCode = error instanceof SnapshotComparisonError ? 3 : 2;
+  if (process.argv.includes("--json")) {
+    const envelope = {
+      error: true,
+      code: error instanceof SnapshotComparisonError ? error.code : "ANALYSIS_ERROR",
+      message,
+    };
+    process.stdout.write(`${JSON.stringify(envelope)}\n`);
+  } else {
+    console.error(message);
+  }
+  process.exitCode = exitCode;
 }
