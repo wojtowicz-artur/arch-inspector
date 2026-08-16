@@ -1,5 +1,11 @@
 export const IR_VERSION = "0.3" as const;
 export const TOOL_VERSION = "0.3.0" as const;
+export const IR_CONTRACT = {
+  version: IR_VERSION,
+  compatibility: "exact",
+  unknownFields: "reject",
+  receipt: "required",
+} as const;
 
 export type Resolution = "internal" | "external" | "asset" | "unresolved";
 export type ImportKind = "static" | "export" | "dynamic" | "require";

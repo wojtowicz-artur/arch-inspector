@@ -4,6 +4,7 @@ import {
   analyzeProject,
   diffSnapshots,
   evaluateRules,
+  IR_CONTRACT,
   IR_VERSION,
   renderModuleGraphDot,
   type RuleSpec,
@@ -17,6 +18,12 @@ test("public entrypoint exposes the library API", () => {
     const diff = diffSnapshots(snapshot, snapshot);
 
     assert.equal(IR_VERSION, "0.3");
+    assert.deepEqual(IR_CONTRACT, {
+      version: "0.3",
+      compatibility: "exact",
+      unknownFields: "reject",
+      receipt: "required",
+    });
     assert.equal(snapshot.irVersion, IR_VERSION);
     assert.equal(diff.hasRegressions, false);
     assert.match(renderModuleGraphDot(snapshot), /^digraph architecture \{/);

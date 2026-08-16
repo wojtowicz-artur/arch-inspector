@@ -76,8 +76,13 @@ Formatowanie zapewnia Oxfmt (`npm run format`), a lintowanie Oxlint
 `.oxlintrc.json`; zakres narzędzi obejmuje `src` oraz `test`.
 
 Konfiguracja projektu, snapshoty IR i deklaracje `RuleSpec` są walidowane
-runtime przez Zod. Błędy na tych granicach zawierają ścieżkę do niepoprawnego
-pola zamiast cichego rzutowania danych.
+runtime przez Zod. Analyzer waliduje również snapshot przed zwróceniem go do
+konsumenta, a receipt jest sprawdzany przy zapisie/odczycie. Błędy na tych
+granicach zawierają ścieżkę do niepoprawnego pola zamiast cichego rzutowania
+danych. Przykładowy kontrakt IR 0.3 znajduje się w
+`test/fixtures/architecture-0.3.json`. Polityka IR 0.3 jest jawnie `exact`:
+receipt jest wymagany, a nieznane pola są odrzucane; kolejna wersja będzie
+wymagała osobnego adaptera/migracji.
 
 `arch graph` emituje deterministyczny graf modułów w formacie Graphviz DOT. Węzły
 uczestniczące w cyklu są wyróżnione, a etykiety krawędzi pokazują liczbę

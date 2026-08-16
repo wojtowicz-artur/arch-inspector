@@ -1,5 +1,5 @@
 import { z } from "zod";
-import { IR_VERSION, TOOL_VERSION, type ArchitectureSnapshot } from "./ir.js";
+import { IR_CONTRACT, TOOL_VERSION, type ArchitectureSnapshot } from "./ir.js";
 
 const factOriginSchema = z.enum(["observed", "declared", "inferred", "derived"]);
 const evidenceKindSchema = z.enum(["file", "source-edge", "module", "module-edge", "config", "rule"]);
@@ -130,7 +130,7 @@ const snapshotReceiptSchema = z
     snapshotId: z.string().regex(/^[a-f0-9]{64}$/),
     tool: z.literal("arch-inspector"),
     toolVersion: z.literal(TOOL_VERSION),
-    irVersion: z.literal(IR_VERSION),
+    irVersion: z.literal(IR_CONTRACT.version),
     configHash: z.string().regex(/^[a-f0-9]{64}$/),
     compilerOptionsHash: z.string().regex(/^[a-f0-9]{64}$/),
     inputHash: z.string().regex(/^[a-f0-9]{64}$/),
@@ -139,7 +139,7 @@ const snapshotReceiptSchema = z
 
 const architectureSnapshotSchema: z.ZodType<ArchitectureSnapshot> = z
   .object({
-    irVersion: z.literal(IR_VERSION),
+    irVersion: z.literal(IR_CONTRACT.version),
     receipt: snapshotReceiptSchema,
     project: z
       .object({

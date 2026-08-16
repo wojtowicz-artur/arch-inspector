@@ -1,5 +1,4 @@
 import fs from "node:fs";
-import { IR_VERSION } from "./ir.js";
 import type {
   ArchitectureCycle,
   ArchitectureFinding,
@@ -10,10 +9,9 @@ import type {
   SourceFile,
   SourceImport,
 } from "./ir.js";
-import { architectureSnapshotSchema } from "./ir-schema.js";
+import { validateArchitectureSnapshot, verifySnapshotReceipt } from "./ir-contract.js";
 import { findingKey } from "./rules.js";
-import { canonicalStringify, compare, sha256 } from "./stable.js";
-import { formatSchemaIssues } from "./schema-utils.js";
+import { canonicalStringify, compare } from "./stable.js";
 
 export interface CollectionDiff<T> {
   added: T[];
@@ -171,17 +169,7 @@ export function loadSnapshot(filePath: string): ArchitectureSnapshot {
     const reason = error instanceof Error ? ` ${error.message}` : "";
     throw new Error(`Could not read architecture snapshot '${filePath}'.${reason}`, { cause: error });
   }
-  const validated = architectureSnapshotSchema.safeParse(parsed);
-  if (!validated.success) {
-    throw new Error(
-      `'${filePath}' is not an Architecture IR ${IR_VERSION} snapshot. ${formatSchemaIssues(validated.error)}`,
-    );
-  }
-  const snapshot = validated.data;
-  const { receipt, ...base } = snapshot;
-  const expected = sha256({ ...base, receipt: { ...receipt, snapshotId: "" } });
-  if (expected !== receipt.snapshotId) {
-    throw new Error(`'${filePath}' has an invalid snapshot receipt.`);
-  }
+  const snapshot = validateArchitectureSnapshot(parsed, `'${filePath}'`);
+  verifySnapshotReceipt(snapshot, `'${filePath}'`);
   return snapshot;
 }

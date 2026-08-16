@@ -8,6 +8,7 @@ import {
   type ArchitectureSnapshot,
   type SourceFile,
 } from "./ir.js";
+import { assertArchitectureSnapshot } from "./ir-contract.js";
 import { buildModuleEdges, findCycles } from "./graph.js";
 import { inferModules } from "./modules.js";
 import { discoverProject, relativeToRoot, type DiscoveredProject } from "./project.js";
@@ -170,5 +171,8 @@ export function analyzeProject(inputPath = "."): ArchitectureSnapshot {
     architecture,
     analysis,
   };
-  return { ...base, receipt: createReceipt(base, project) };
+  return assertArchitectureSnapshot(
+    { ...base, receipt: createReceipt(base, project) },
+    "Generated architecture snapshot",
+  );
 }
