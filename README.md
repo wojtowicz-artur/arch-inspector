@@ -75,6 +75,10 @@ Formatowanie zapewnia Oxfmt (`npm run format`), a lintowanie Oxlint
 (`npm run lint`). Konfiguracje znajdują się w `.oxfmtrc.json` i
 `.oxlintrc.json`; zakres narzędzi obejmuje `src` oraz `test`.
 
+Konfiguracja projektu, snapshoty IR i deklaracje `RuleSpec` są walidowane
+runtime przez Zod. Błędy na tych granicach zawierają ścieżkę do niepoprawnego
+pola zamiast cichego rzutowania danych.
+
 `arch graph` emituje deterministyczny graf modułów w formacie Graphviz DOT. Węzły
 uczestniczące w cyklu są wyróżnione, a etykiety krawędzi pokazują liczbę
 importów i udział importów przez publiczne API. Flaga `--json` zachowuje pełny

@@ -1,5 +1,5 @@
 import fs from "node:fs";
-import { IR_VERSION, TOOL_VERSION } from "./ir.js";
+import { IR_VERSION } from "./ir.js";
 import type {
   ArchitectureCycle,
   ArchitectureFinding,
@@ -10,8 +10,10 @@ import type {
   SourceFile,
   SourceImport,
 } from "./ir.js";
+import { architectureSnapshotSchema } from "./ir-schema.js";
 import { findingKey } from "./rules.js";
 import { canonicalStringify, compare, sha256 } from "./stable.js";
+import { formatSchemaIssues } from "./schema-utils.js";
 
 export interface CollectionDiff<T> {
   added: T[];
@@ -161,78 +163,6 @@ export function diffSnapshots(
   };
 }
 
-function isRecord(value: unknown): value is Record<string, unknown> {
-  return typeof value === "object" && value !== null;
-}
-
-function hasProvenance(value: unknown): boolean {
-  if (!isRecord(value) || typeof value.origin !== "string") return false;
-  return ["observed", "declared", "inferred", "derived"].includes(value.origin);
-}
-
-function hasReceipt(value: unknown): value is ArchitectureSnapshot["receipt"] {
-  return (
-    isRecord(value) &&
-    typeof value.snapshotId === "string" &&
-    /^[a-f0-9]{64}$/.test(value.snapshotId) &&
-    value.tool === "arch-inspector" &&
-    value.toolVersion === TOOL_VERSION &&
-    value.irVersion === IR_VERSION &&
-    typeof value.configHash === "string" &&
-    typeof value.compilerOptionsHash === "string" &&
-    typeof value.inputHash === "string"
-  );
-}
-
-function isArchitectureSnapshot(value: unknown): value is ArchitectureSnapshot {
-  if (!isRecord(value) || value.irVersion !== IR_VERSION) return false;
-  if (!hasReceipt(value.receipt)) return false;
-  const project = value.project;
-  const policy = value.policy;
-  const source = value.source;
-  const architecture = value.architecture;
-  const analysis = value.analysis;
-  if (
-    !isRecord(project) ||
-    typeof project.root !== "string" ||
-    typeof project.tsconfig !== "string" ||
-    typeof project.sourceRoot !== "string" ||
-    !isRecord(policy) ||
-    !Array.isArray(policy.failOn) ||
-    !hasProvenance(policy.provenance) ||
-    !isRecord(source) ||
-    !isRecord(architecture) ||
-    !isRecord(analysis)
-  )
-    return false;
-  if (
-    !hasProvenance(source.provenance) ||
-    !Array.isArray(source.files) ||
-    !Array.isArray(source.imports) ||
-    !hasProvenance(architecture.provenance) ||
-    !Array.isArray(architecture.modules) ||
-    !Array.isArray(architecture.ownership) ||
-    !Array.isArray(architecture.moduleEdges) ||
-    !hasProvenance(analysis.provenance) ||
-    !Array.isArray(analysis.cycles) ||
-    !Array.isArray(analysis.findings) ||
-    !isRecord(analysis.metrics) ||
-    !hasProvenance(analysis.metrics.provenance)
-  )
-    return false;
-  const facts = [
-    ...source.files,
-    ...source.imports,
-    ...architecture.modules,
-    ...architecture.ownership,
-    ...architecture.moduleEdges,
-    ...analysis.cycles,
-    ...analysis.findings,
-    analysis.metrics,
-  ];
-  return facts.every((fact) => isRecord(fact) && hasProvenance(fact.provenance));
-}
-
 export function loadSnapshot(filePath: string): ArchitectureSnapshot {
   let parsed: unknown;
   try {
@@ -241,13 +171,17 @@ export function loadSnapshot(filePath: string): ArchitectureSnapshot {
     const reason = error instanceof Error ? ` ${error.message}` : "";
     throw new Error(`Could not read architecture snapshot '${filePath}'.${reason}`, { cause: error });
   }
-  if (!isArchitectureSnapshot(parsed)) {
-    throw new Error(`'${filePath}' is not an Architecture IR ${IR_VERSION} snapshot.`);
+  const validated = architectureSnapshotSchema.safeParse(parsed);
+  if (!validated.success) {
+    throw new Error(
+      `'${filePath}' is not an Architecture IR ${IR_VERSION} snapshot. ${formatSchemaIssues(validated.error)}`,
+    );
   }
-  const { receipt, ...base } = parsed;
+  const snapshot = validated.data;
+  const { receipt, ...base } = snapshot;
   const expected = sha256({ ...base, receipt: { ...receipt, snapshotId: "" } });
   if (expected !== receipt.snapshotId) {
     throw new Error(`'${filePath}' has an invalid snapshot receipt.`);
   }
-  return parsed;
+  return snapshot;
 }

@@ -28,7 +28,8 @@
     "quality": "npm run format:check && npm run lint && npm test"
   },
   "dependencies": {
-    "typescript": "^5.8.3"
+    "typescript": "^5.8.3",
+    "zod": "^4.4.3"
   },
   "devDependencies": {
     "@types/node": "^22.15.3",

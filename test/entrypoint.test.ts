@@ -60,6 +60,24 @@ test("accepts custom declarative rule specifications", () => {
     assert.ok(findings.length > 0);
     assert.ok(findings.every((finding) => finding.code === customRule.code));
     assert.ok(findings.every((finding) => finding.provenance.rule === customRule.code));
+
+    assert.throws(
+      () =>
+        evaluateRules(
+          {
+            config: {},
+            modules: snapshot.architecture.modules,
+            imports: snapshot.source.imports,
+            fileToModule: new Map(snapshot.architecture.ownership.map((entry) => [entry.file, entry.module])),
+            moduleEntrypoints: new Map(
+              snapshot.architecture.modules.map((module) => [module.id, new Set(module.entrypoints)]),
+            ),
+            cycles: snapshot.analysis.cycles,
+          },
+          [{ ...customRule, where: [{ field: "isInternal", operator: "unsupported" }] } as unknown as RuleSpec],
+        ),
+      /Invalid rule specification/,
+    );
   } finally {
     project.cleanup();
   }

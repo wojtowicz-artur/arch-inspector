@@ -1,7 +1,12 @@
 import assert from "node:assert/strict";
 import test from "node:test";
 import { analyzeProject } from "../src/analyzer.js";
-import { createCollidingModulesProject, createSampleProject, createScopedProject } from "./helpers/projects.js";
+import {
+  createCollidingModulesProject,
+  createProject,
+  createSampleProject,
+  createScopedProject,
+} from "./helpers/projects.js";
 
 test("builds a deterministic architecture snapshot from a TypeScript project", () => {
   const project = createSampleProject();
@@ -102,6 +107,18 @@ test("namespaces colliding inferred module ids by root", () => {
       "modules/auth",
     );
     assert.equal(snapshot.architecture.ownership.find((entry) => entry.file === "src/app.ts")?.module, "src");
+  } finally {
+    project.cleanup();
+  }
+});
+
+test("rejects malformed project configuration at the boundary", () => {
+  const project = createProject({
+    archConfig: { noCycles: "yes" },
+    files: { "src/app.ts": "export const app = true;\n" },
+  });
+  try {
+    assert.throws(() => analyzeProject(project.root), /Invalid arch\.config\.json: noCycles/);
   } finally {
     project.cleanup();
   }

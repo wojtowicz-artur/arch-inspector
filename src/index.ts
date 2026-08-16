@@ -10,7 +10,10 @@ export { analyzeGitRef } from "./git.js";
 export { diffSnapshots, loadSnapshot, SnapshotComparisonError } from "./diff.js";
 export { renderModuleGraphDot } from "./graph.js";
 export { IR_VERSION, TOOL_VERSION } from "./ir.js";
+export { architectureSnapshotSchema } from "./ir-schema.js";
+export { inspectorConfigSchema } from "./config-schema.js";
 export { BUILTIN_RULES, createRuleContext, evaluateRules } from "./rules.js";
+export { ruleSpecListSchema, ruleSpecSchema } from "./rule-schema.js";
 
 export type {
   AnalysisFacts,

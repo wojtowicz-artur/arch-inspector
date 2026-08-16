@@ -1,33 +1,10 @@
 import fs from "node:fs";
 import path from "node:path";
 import ts from "typescript";
+import { inspectorConfigSchema, type InspectorConfig } from "./config-schema.js";
+import { formatSchemaIssues } from "./schema-utils.js";
 
-export interface InspectorConfig {
-  /** Paths are relative to the directory containing tsconfig.json. */
-  include?: string[];
-  /** Additional paths to ignore. Generated directories are ignored by default. */
-  exclude?: string[];
-  moduleRoots?: string[];
-  /** Explicit module declarations for projects whose boundaries are not folder-conventional. */
-  modules?: Record<
-    string,
-    {
-      root: string;
-      publicEntrypoints?: string[];
-    }
-  >;
-  /** Maps inferred module ids to files which form their public API. */
-  publicEntrypoints?: Record<string, string[]>;
-  noCycles?: boolean;
-  noDeepImports?: boolean;
-  /** Finding selectors enforced by `arch check`; empty means report-only. */
-  failOn?: string[];
-  forbiddenDependencies?: Array<{
-    from: string;
-    to: string;
-    message?: string;
-  }>;
-}
+export type { InspectorConfig } from "./config-schema.js";
 
 export interface DiscoveredProject {
   root: string;
@@ -71,9 +48,18 @@ function commonDirectory(files: string[]): string {
 function readInspectorConfig(root: string): InspectorConfig {
   const configPath = path.join(root, "arch.config.json");
   if (!fs.existsSync(configPath)) return {};
-  const raw = JSON.parse(fs.readFileSync(configPath, "utf8")) as unknown;
-  if (!raw || typeof raw !== "object") throw new Error("arch.config.json must contain an object");
-  return raw as InspectorConfig;
+  let raw: unknown;
+  try {
+    raw = JSON.parse(fs.readFileSync(configPath, "utf8")) as unknown;
+  } catch (error) {
+    const reason = error instanceof Error ? ` ${error.message}` : "";
+    throw new Error(`Could not read arch.config.json.${reason}`, { cause: error });
+  }
+  const parsed = inspectorConfigSchema.safeParse(raw);
+  if (!parsed.success) {
+    throw new Error(`Invalid arch.config.json: ${formatSchemaIssues(parsed.error)}`);
+  }
+  return parsed.data;
 }
 
 function isSourceFile(file: string): boolean {
