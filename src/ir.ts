@@ -1,15 +1,21 @@
-export const IR_VERSION = "0.1" as const;
+export const IR_VERSION = "0.2" as const;
 
 export type Resolution = "internal" | "external" | "asset" | "unresolved";
 export type ImportKind = "static" | "export" | "dynamic" | "require";
 export type DiagnosticLevel = "error" | "warning" | "info";
 export type DiagnosticCategory = "violation" | "observation";
+export type FactOrigin = "source" | "config" | "inferred" | "derived";
+
+export interface Provenance {
+  origin: FactOrigin;
+}
 
 export interface ArchitectureFile {
   path: string;
   moduleId: string;
   language: "typescript" | "javascript";
   lines: number;
+  provenance: Provenance;
 }
 
 export interface ArchitectureModule {
@@ -18,6 +24,7 @@ export interface ArchitectureModule {
   root: string;
   files: string[];
   entrypoints: string[];
+  provenance: Provenance;
 }
 
 export interface ArchitectureEdge {
@@ -35,6 +42,7 @@ export interface ArchitectureEdge {
     line: number;
     column: number;
   };
+  provenance: Provenance;
 }
 
 export interface ModuleEdge {
@@ -43,6 +51,7 @@ export interface ModuleEdge {
   imports: number;
   publicApiImports: number;
   files: string[];
+  provenance: Provenance;
 }
 
 export interface ArchitectureDiagnostic {
@@ -54,6 +63,12 @@ export interface ArchitectureDiagnostic {
   line?: number;
   related?: string[];
   data?: Record<string, unknown>;
+  provenance: Provenance;
+}
+
+export interface ArchitectureCycle {
+  modules: string[];
+  provenance: Provenance;
 }
 
 export interface ArchitectureMetrics {
@@ -69,6 +84,22 @@ export interface ArchitectureMetrics {
   deepImports: number;
   maxFanIn: { module: string; value: number } | null;
   maxFanOut: { module: string; value: number } | null;
+  provenance: Provenance;
+}
+
+export interface SourceFacts {
+  files: ArchitectureFile[];
+  edges: ArchitectureEdge[];
+  provenance: Provenance;
+}
+
+export interface ArchitectureFacts {
+  modules: ArchitectureModule[];
+  moduleEdges: ModuleEdge[];
+  cycles: ArchitectureCycle[];
+  metrics: ArchitectureMetrics;
+  diagnostics: ArchitectureDiagnostic[];
+  provenance: Provenance;
 }
 
 export interface ArchitectureSnapshot {
@@ -78,11 +109,6 @@ export interface ArchitectureSnapshot {
     tsconfig: string;
     sourceRoot: string;
   };
-  modules: ArchitectureModule[];
-  files: ArchitectureFile[];
-  edges: ArchitectureEdge[];
-  moduleEdges: ModuleEdge[];
-  cycles: string[][];
-  metrics: ArchitectureMetrics;
-  diagnostics: ArchitectureDiagnostic[];
+  source: SourceFacts;
+  architecture: ArchitectureFacts;
 }

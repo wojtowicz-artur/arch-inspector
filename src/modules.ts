@@ -97,6 +97,7 @@ export function inferModules(project: DiscoveredProject): {
       root: relativeToRoot(project.root, root),
       files: files.map((file) => relativeToRoot(project.root, file)).sort(),
       entrypoints: configuredEntrypoints ?? inferredEntrypoints,
+      provenance: { origin: explicitModules.some((module) => module.id === id) ? "config" : "inferred" },
     };
   });
 

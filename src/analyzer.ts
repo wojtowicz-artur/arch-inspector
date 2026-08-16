@@ -16,7 +16,7 @@ function linesIn(file: string): number {
   return text === "" ? 0 : text.split(/\r?\n/).length;
 }
 
-function metrics(project: DiscoveredProject, modules: ArchitectureSnapshot["modules"], edges: ArchitectureSnapshot["edges"], moduleEdges: ArchitectureSnapshot["moduleEdges"], cycles: string[][]): ArchitectureMetrics {
+function metrics(project: DiscoveredProject, modules: ArchitectureSnapshot["architecture"]["modules"], edges: ArchitectureSnapshot["source"]["edges"], moduleEdges: ArchitectureSnapshot["architecture"]["moduleEdges"], cycles: string[][]): ArchitectureMetrics {
   const fanIn = new Map(modules.map((module) => [module.id, 0]));
   const fanOut = new Map(modules.map((module) => [module.id, 0]));
   for (const edge of moduleEdges) {
@@ -41,6 +41,7 @@ function metrics(project: DiscoveredProject, modules: ArchitectureSnapshot["modu
     deepImports: edges.filter((edge) => edge.resolution === "internal" && edge.fromModule !== edge.toModule && !edge.publicApi).length,
     maxFanIn: highest(fanIn),
     maxFanOut: highest(fanOut),
+    provenance: { origin: "derived" },
   };
 }
 
@@ -50,13 +51,15 @@ export function analyzeProject(inputPath = "."): ArchitectureSnapshot {
   const moduleEntrypoints = new Map(inferred.modules.map((module) => [module.id, new Set(module.entrypoints.map((file) => path.normalize(path.join(project.root, file))))]));
   const edges = collectEdges(project, inferred.fileToModule, moduleEntrypoints);
   const moduleEdges = buildModuleEdges(edges);
-  const cycles = findCycles(inferred.modules, moduleEdges);
-  const diagnostics = evaluateRules(project.config, inferred.modules, edges, cycles);
+  const cycleModules = findCycles(inferred.modules, moduleEdges);
+  const cycles = cycleModules.map((modules) => ({ modules, provenance: { origin: "derived" as const } }));
+  const diagnostics = evaluateRules(project.config, inferred.modules, edges, cycleModules);
   const files: ArchitectureFile[] = project.files.map((file) => ({
     path: relativeToRoot(project.root, file),
     moduleId: inferred.fileToModule.get(file)!,
     language: languageFor(file),
     lines: linesIn(file),
+    provenance: { origin: "source" as const },
   })).sort((a, b) => a.path.localeCompare(b.path));
 
   const snapshot: ArchitectureSnapshot = {
@@ -66,13 +69,19 @@ export function analyzeProject(inputPath = "."): ArchitectureSnapshot {
       tsconfig: relativeToRoot(project.root, project.tsconfigPath),
       sourceRoot: relativeToRoot(project.root, project.sourceRoot),
     },
-    modules: inferred.modules,
-    files,
-    edges,
-    moduleEdges,
-    cycles,
-    metrics: metrics(project, inferred.modules, edges, moduleEdges, cycles),
-    diagnostics,
+    source: {
+      files,
+      edges,
+      provenance: { origin: "source" },
+    },
+    architecture: {
+      modules: inferred.modules,
+      moduleEdges,
+      cycles,
+      metrics: metrics(project, inferred.modules, edges, moduleEdges, cycleModules),
+      diagnostics,
+      provenance: { origin: "derived" },
+    },
   };
   return snapshot;
 }

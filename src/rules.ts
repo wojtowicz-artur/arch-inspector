@@ -22,6 +22,7 @@ export function evaluateRules(
         message: `Module dependency cycle: ${cycle.join(" → ")} → ${cycle[0]}`,
         related: cycle,
         data: { modules: cycle },
+        provenance: { origin: "derived" },
       });
     }
   }
@@ -36,6 +37,7 @@ export function evaluateRules(
         file: edge.fromFile,
         line: edge.location.line,
         data: { specifier: edge.specifier },
+        provenance: { origin: "derived" },
       });
     }
     if (noDeepImports && edge.resolution === "internal" && edge.fromModule !== edge.toModule && !edge.publicApi) {
@@ -47,6 +49,7 @@ export function evaluateRules(
         file: edge.fromFile,
         line: edge.location.line,
         data: { from: edge.fromModule, to: edge.toModule, target: edge.toFile },
+        provenance: { origin: "derived" },
       });
     }
   }
@@ -62,6 +65,7 @@ export function evaluateRules(
           file: edge.fromFile,
           line: edge.location.line,
           data: { from: rule.from, to: rule.to },
+          provenance: { origin: "derived" },
         });
       }
     }
@@ -75,6 +79,7 @@ export function evaluateRules(
         level: "info",
         message: `Module '${module.id}' has no index entrypoint; cross-module imports cannot be checked as public API.`,
         related: [module.id],
+        provenance: { origin: "derived" },
       });
     }
   }

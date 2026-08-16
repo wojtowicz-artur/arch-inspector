@@ -2,7 +2,7 @@
 
 Pierwszy eksperymentalny slice toolingu do obserwowania ewolucji architektury TypeScript.
 
-## MVP 0.1
+## MVP 0.2
 
 Inspector nie wymaga adnotacji w analizowanym kodzie. Czyta istniejące `tsconfig.json`, wykorzystuje TypeScript Compiler API do rozwiązywania importów i emituje deterministyczny Architecture IR:
 
@@ -14,6 +14,12 @@ Inspector nie wymaga adnotacji w analizowanym kodzie. Czyta istniejące `tsconfi
 - wykrywanie deep imports względem `index.ts` modułu;
 - deterministyczny JSON z wersjonowanym `irVersion`;
 - reguły `noCycles`, `noDeepImports` i jawne zakazane zależności.
+
+Snapshot rozdziela fakty źródłowe od architektonicznych:
+`source.files` i `source.edges` opisują to, co wynika z plików i resolvera,
+a `architecture` zawiera moduły, krawędzie modułów, cykle, metryki i diagnostykę.
+Każdy fakt ma `provenance.origin` (`source`, `config`, `inferred` albo `derived`).
+Zmiana schematu podnosi `irVersion` do `0.2`.
 
 ## Architecture Diff 0.2
 

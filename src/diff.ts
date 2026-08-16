@@ -1,6 +1,8 @@
 import fs from "node:fs";
+import { IR_VERSION } from "./ir.js";
 import type {
   ArchitectureDiagnostic,
+  ArchitectureCycle,
   ArchitectureEdge,
   ArchitectureFile,
   ArchitectureModule,
@@ -24,13 +26,17 @@ export interface ArchitectureDiff {
   irVersion: ArchitectureSnapshot["irVersion"];
   base: string;
   current: string;
-  modules: CollectionDiff<ArchitectureModule>;
-  files: CollectionDiff<ArchitectureFile>;
-  edges: CollectionDiff<ArchitectureEdge>;
-  moduleEdges: CollectionDiff<ModuleEdge>;
-  cycles: CollectionDiff<string[]>;
-  diagnostics: CollectionDiff<ArchitectureDiagnostic>;
-  metrics: Record<string, MetricDelta>;
+  source: {
+    files: CollectionDiff<ArchitectureFile>;
+    edges: CollectionDiff<ArchitectureEdge>;
+  };
+  architecture: {
+    modules: CollectionDiff<ArchitectureModule>;
+    moduleEdges: CollectionDiff<ModuleEdge>;
+    cycles: CollectionDiff<ArchitectureCycle>;
+    diagnostics: CollectionDiff<ArchitectureDiagnostic>;
+    metrics: Record<string, MetricDelta>;
+  };
   introducedViolations: ArchitectureDiagnostic[];
   resolvedViolations: ArchitectureDiagnostic[];
   hasRegressions: boolean;
@@ -81,8 +87,8 @@ function diagnosticKey(diagnostic: ArchitectureDiagnostic): string {
   return [diagnostic.code, diagnostic.category, diagnostic.file ?? "", diagnostic.message].join("\0");
 }
 
-function cycleKey(cycle: string[]): string {
-  return [...cycle].sort(compare).join("\0");
+function cycleKey(cycle: ArchitectureCycle): string {
+  return [...cycle.modules].sort(compare).join("\0");
 }
 
 function metricDeltas(before: ArchitectureSnapshot, after: ArchitectureSnapshot): Record<string, MetricDelta> {
@@ -100,8 +106,8 @@ function metricDeltas(before: ArchitectureSnapshot, after: ArchitectureSnapshot)
     "deepImports",
   ] as const;
   for (const key of keys) {
-    const beforeValue = before.metrics[key];
-    const afterValue = after.metrics[key];
+    const beforeValue = before.architecture.metrics[key];
+    const afterValue = after.architecture.metrics[key];
     result[key] = { before: beforeValue, after: afterValue, delta: afterValue - beforeValue };
   }
   return result;
@@ -116,12 +122,12 @@ export function diffSnapshots(
     throw new Error(`Cannot compare IR ${before.irVersion} with IR ${after.irVersion}.`);
   }
 
-  const modules = diffCollection(before.modules, after.modules, (module) => module.id);
-  const files = diffCollection(before.files, after.files, (file) => file.path);
-  const edges = diffCollection(before.edges, after.edges, edgeKey);
-  const moduleEdges = diffCollection(before.moduleEdges, after.moduleEdges, (edge) => `${edge.from}\0${edge.to}`);
-  const cycles = diffCollection(before.cycles, after.cycles, cycleKey);
-  const diagnostics = diffCollection(before.diagnostics, after.diagnostics, diagnosticKey);
+  const modules = diffCollection(before.architecture.modules, after.architecture.modules, (module) => module.id);
+  const files = diffCollection(before.source.files, after.source.files, (file) => file.path);
+  const edges = diffCollection(before.source.edges, after.source.edges, edgeKey);
+  const moduleEdges = diffCollection(before.architecture.moduleEdges, after.architecture.moduleEdges, (edge) => `${edge.from}\0${edge.to}`);
+  const cycles = diffCollection(before.architecture.cycles, after.architecture.cycles, cycleKey);
+  const diagnostics = diffCollection(before.architecture.diagnostics, after.architecture.diagnostics, diagnosticKey);
   const introducedViolations = diagnostics.added
     .filter((diagnostic) => diagnostic.category === "violation")
     .sort((a, b) => diagnosticKey(a).localeCompare(diagnosticKey(b)));
@@ -133,13 +139,8 @@ export function diffSnapshots(
     irVersion: before.irVersion,
     base: labels.base ?? "base",
     current: labels.current ?? "current",
-    modules,
-    files,
-    edges,
-    moduleEdges,
-    cycles,
-    diagnostics,
-    metrics: metricDeltas(before, after),
+    source: { files, edges },
+    architecture: { modules, moduleEdges, cycles, diagnostics, metrics: metricDeltas(before, after) },
     introducedViolations,
     resolvedViolations,
     hasRegressions: cycles.added.length > 0 || introducedViolations.length > 0,
@@ -154,8 +155,29 @@ export function loadSnapshot(filePath: string): ArchitectureSnapshot {
     const reason = error instanceof Error ? ` ${error.message}` : "";
     throw new Error(`Could not read architecture snapshot '${filePath}'.${reason}`);
   }
-  if (!parsed || typeof parsed !== "object" || (parsed as Partial<ArchitectureSnapshot>).irVersion !== "0.1") {
-    throw new Error(`'${filePath}' is not an Architecture IR 0.1 snapshot.`);
+  if (!isArchitectureSnapshot(parsed)) {
+    throw new Error(`'${filePath}' is not an Architecture IR ${IR_VERSION} snapshot.`);
   }
-  return parsed as ArchitectureSnapshot;
+  return parsed;
+}
+
+function isRecord(value: unknown): value is Record<string, unknown> {
+  return typeof value === "object" && value !== null;
+}
+
+function hasProvenance(value: unknown): boolean {
+  if (!isRecord(value) || typeof value.origin !== "string") return false;
+  return ["source", "config", "inferred", "derived"].includes(value.origin);
+}
+
+function isArchitectureSnapshot(value: unknown): value is ArchitectureSnapshot {
+  if (!isRecord(value) || value.irVersion !== IR_VERSION) return false;
+  const source = value.source;
+  const architecture = value.architecture;
+  if (!isRecord(source) || !isRecord(architecture)) return false;
+  if (!hasProvenance(source.provenance) || !hasProvenance(architecture.provenance)) return false;
+  if (!Array.isArray(source.files) || !Array.isArray(source.edges)) return false;
+  if (!Array.isArray(architecture.modules) || !Array.isArray(architecture.moduleEdges) || !Array.isArray(architecture.cycles) || !Array.isArray(architecture.diagnostics) || !isRecord(architecture.metrics)) return false;
+  const facts = [...source.files, ...source.edges, ...architecture.modules, ...architecture.moduleEdges, ...architecture.cycles, ...architecture.diagnostics, architecture.metrics];
+  return facts.every((fact) => isRecord(fact) && hasProvenance(fact.provenance));
 }

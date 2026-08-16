@@ -55,21 +55,22 @@ function parseArgs(args: string[]): ParsedArgs {
 }
 
 function renderText(snapshot: ArchitectureSnapshot): string {
+  const { metrics, diagnostics } = snapshot.architecture;
   const lines = [
     "Architecture inspection",
     `Project: ${snapshot.project.root}`,
-    `Files: ${snapshot.metrics.sourceFiles}`,
-    `Modules: ${snapshot.metrics.modules}`,
-    `Imports: ${snapshot.metrics.imports} (${snapshot.metrics.internalImports} internal, ${snapshot.metrics.externalImports} external, ${snapshot.metrics.assetImports} assets, ${snapshot.metrics.unresolvedImports} unresolved)`,
-    `Module edges: ${snapshot.metrics.moduleEdges}`,
-    `Cycles: ${snapshot.metrics.cycles}`,
-    `Deep imports: ${snapshot.metrics.deepImports}`,
-    `Max fan-in: ${snapshot.metrics.maxFanIn ? `${snapshot.metrics.maxFanIn.module} (${snapshot.metrics.maxFanIn.value})` : "-"}`,
-    `Max fan-out: ${snapshot.metrics.maxFanOut ? `${snapshot.metrics.maxFanOut.module} (${snapshot.metrics.maxFanOut.value})` : "-"}`,
+    `Files: ${metrics.sourceFiles}`,
+    `Modules: ${metrics.modules}`,
+    `Imports: ${metrics.imports} (${metrics.internalImports} internal, ${metrics.externalImports} external, ${metrics.assetImports} assets, ${metrics.unresolvedImports} unresolved)`,
+    `Module edges: ${metrics.moduleEdges}`,
+    `Cycles: ${metrics.cycles}`,
+    `Deep imports: ${metrics.deepImports}`,
+    `Max fan-in: ${metrics.maxFanIn ? `${metrics.maxFanIn.module} (${metrics.maxFanIn.value})` : "-"}`,
+    `Max fan-out: ${metrics.maxFanOut ? `${metrics.maxFanOut.module} (${metrics.maxFanOut.value})` : "-"}`,
   ];
-  if (snapshot.diagnostics.length > 0) {
+  if (diagnostics.length > 0) {
     lines.push("", "Diagnostics:");
-    for (const diagnostic of snapshot.diagnostics) {
+    for (const diagnostic of diagnostics) {
       const location = diagnostic.file ? ` (${diagnostic.file}${diagnostic.line ? `:${diagnostic.line}` : ""})` : "";
       lines.push(`- [${diagnostic.level}] ${diagnostic.code}: ${diagnostic.message}${location}`);
     }
@@ -95,14 +96,14 @@ function renderDiff(diff: ArchitectureDiff): string {
     for (const value of removed) lines.push(`- ${value}`);
     for (const value of changed) lines.push(`~ ${value}`);
   };
-  section("Modules", diff.modules.added.map((module) => module.id), diff.modules.removed.map((module) => module.id), diff.modules.changed.map(({ after }) => `${after.id} changed`));
-  section("Files", diff.files.added.map((file) => `${file.path} [${file.moduleId}]`), diff.files.removed.map((file) => `${file.path} [${file.moduleId}]`), diff.files.changed.map(({ after }) => `${after.path} changed`));
-  section("Module edges", diff.moduleEdges.added.map((edge) => `${edge.from} → ${edge.to}`), diff.moduleEdges.removed.map((edge) => `${edge.from} → ${edge.to}`), diff.moduleEdges.changed.map(({ after }) => `${after.from} → ${after.to} changed`));
-  section("Import edges", diff.edges.added.map(shortEdge), diff.edges.removed.map(shortEdge), diff.edges.changed.map(({ after }) => `${shortEdge(after)} changed`));
-  section("Cycles", diff.cycles.added.map((cycle) => `${cycle.join(" → ")} → ${cycle[0]}`), diff.cycles.removed.map((cycle) => `${cycle.join(" → ")} → ${cycle[0]}`));
-  section("Diagnostics", diff.diagnostics.added.map(shortDiagnostic), diff.diagnostics.removed.map(shortDiagnostic), diff.diagnostics.changed.map(({ after }) => `${shortDiagnostic(after)} changed`));
+  section("Modules", diff.architecture.modules.added.map((module) => module.id), diff.architecture.modules.removed.map((module) => module.id), diff.architecture.modules.changed.map(({ after }) => `${after.id} changed`));
+  section("Files", diff.source.files.added.map((file) => `${file.path} [${file.moduleId}]`), diff.source.files.removed.map((file) => `${file.path} [${file.moduleId}]`), diff.source.files.changed.map(({ after }) => `${after.path} changed`));
+  section("Module edges", diff.architecture.moduleEdges.added.map((edge) => `${edge.from} → ${edge.to}`), diff.architecture.moduleEdges.removed.map((edge) => `${edge.from} → ${edge.to}`), diff.architecture.moduleEdges.changed.map(({ after }) => `${after.from} → ${after.to} changed`));
+  section("Import edges", diff.source.edges.added.map(shortEdge), diff.source.edges.removed.map(shortEdge), diff.source.edges.changed.map(({ after }) => `${shortEdge(after)} changed`));
+  section("Cycles", diff.architecture.cycles.added.map((cycle) => `${cycle.modules.join(" → ")} → ${cycle.modules[0]}`), diff.architecture.cycles.removed.map((cycle) => `${cycle.modules.join(" → ")} → ${cycle.modules[0]}`));
+  section("Diagnostics", diff.architecture.diagnostics.added.map(shortDiagnostic), diff.architecture.diagnostics.removed.map(shortDiagnostic), diff.architecture.diagnostics.changed.map(({ after }) => `${shortDiagnostic(after)} changed`));
 
-  const changedMetrics = Object.entries(diff.metrics).filter(([, metric]) => metric.delta !== 0);
+  const changedMetrics = Object.entries(diff.architecture.metrics).filter(([, metric]) => metric.delta !== 0);
   if (changedMetrics.length > 0) {
     lines.push("", "Metrics:");
     for (const [name, metric] of changedMetrics) lines.push(`- ${name}: ${metric.before} → ${metric.after} (${metric.delta > 0 ? "+" : ""}${metric.delta})`);
@@ -152,7 +153,7 @@ function main(): void {
     fs.writeFileSync(path.resolve(parsed.out), fileContents, "utf8");
   }
   process.stdout.write(output);
-  if (parsed.command === "check" && snapshot.diagnostics.some((diagnostic) => diagnostic.category === "violation")) process.exitCode = 1;
+  if (parsed.command === "check" && snapshot.architecture.diagnostics.some((diagnostic) => diagnostic.category === "violation")) process.exitCode = 1;
 }
 
 try {

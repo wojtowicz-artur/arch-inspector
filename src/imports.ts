@@ -86,6 +86,7 @@ export function collectEdges(
         typeOnly: current.typeOnly,
         publicApi,
         location: { line: location.line + 1, column: location.character + 1 },
+        provenance: { origin: "source" },
       });
     }
   }

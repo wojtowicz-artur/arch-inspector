@@ -5,7 +5,7 @@ export function buildModuleEdges(edges: ArchitectureEdge[]): ModuleEdge[] {
   for (const edge of edges) {
     if (edge.resolution !== "internal" || !edge.toModule || edge.fromModule === edge.toModule) continue;
     const key = `${edge.fromModule}\0${edge.toModule}`;
-    const current = grouped.get(key) ?? { from: edge.fromModule, to: edge.toModule, imports: 0, publicApiImports: 0, files: [] };
+    const current = grouped.get(key) ?? { from: edge.fromModule, to: edge.toModule, imports: 0, publicApiImports: 0, files: [], provenance: { origin: "derived" as const } };
     current.imports += 1;
     if (edge.publicApi) current.publicApiImports += 1;
     if (!current.files.includes(edge.fromFile)) current.files.push(edge.fromFile);
@@ -67,8 +67,9 @@ function dotString(value: string): string {
  * rendered by Graphviz or consumed by other visualization tools without
  * requiring access to the analyzed project.
  */
-export function renderModuleGraphDot(snapshot: Pick<ArchitectureSnapshot, "modules" | "moduleEdges" | "cycles">): string {
-  const cycleModules = new Set(snapshot.cycles.flat());
+export function renderModuleGraphDot(snapshot: Pick<ArchitectureSnapshot, "architecture">): string {
+  const { modules, moduleEdges, cycles } = snapshot.architecture;
+  const cycleModules = new Set(cycles.flatMap((cycle) => cycle.modules));
   const lines = [
     "digraph architecture {",
     "  rankdir=LR;",
@@ -77,7 +78,7 @@ export function renderModuleGraphDot(snapshot: Pick<ArchitectureSnapshot, "modul
     "  edge [fontname=\"sans-serif\"];",
   ];
 
-  for (const module of [...snapshot.modules].sort((a, b) => a.id.localeCompare(b.id))) {
+  for (const module of [...modules].sort((a, b) => a.id.localeCompare(b.id))) {
     const attributes = [`label=${dotString(`${module.id}\n${module.files.length} file${module.files.length === 1 ? "" : "s"}`)}`];
     if (cycleModules.has(module.id)) {
       attributes.push("color=\"#dc2626\"", "penwidth=\"2\"");
@@ -85,7 +86,7 @@ export function renderModuleGraphDot(snapshot: Pick<ArchitectureSnapshot, "modul
     lines.push(`  ${dotString(module.id)} [${attributes.join(", ")}];`);
   }
 
-  for (const edge of [...snapshot.moduleEdges].sort((a, b) => `${a.from}\0${a.to}`.localeCompare(`${b.from}\0${b.to}`))) {
+  for (const edge of [...moduleEdges].sort((a, b) => `${a.from}\0${a.to}`.localeCompare(`${b.from}\0${b.to}`))) {
     const publicApi = edge.publicApiImports === edge.imports ? "public API" : `${edge.publicApiImports}/${edge.imports} public API`;
     lines.push(`  ${dotString(edge.from)} -> ${dotString(edge.to)} [label=${dotString(`${edge.imports} (${publicApi})`)}];`);
   }

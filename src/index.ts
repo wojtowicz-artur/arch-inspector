@@ -13,6 +13,8 @@ export { IR_VERSION } from "./ir.js";
 
 export type {
   ArchitectureDiagnostic,
+  ArchitectureCycle,
+  ArchitectureFacts,
   ArchitectureEdge,
   ArchitectureFile,
   ArchitectureMetrics,
@@ -20,9 +22,12 @@ export type {
   ArchitectureSnapshot,
   DiagnosticCategory,
   DiagnosticLevel,
+  FactOrigin,
   ImportKind,
   ModuleEdge,
+  Provenance,
   Resolution,
+  SourceFacts,
 } from "./ir.js";
 
 export type {
