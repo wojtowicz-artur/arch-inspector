@@ -129,6 +129,8 @@ mapują rekord na finding. Katalog wbudowany można rozszerzyć przez pole `rule
 w `arch.config.json` albo programowo przez `evaluateRules(input, [...])`.
 Reguła musi wskazywać znaną kolekcję (`cycles`, `imports`,
 `forbiddenDependencies` albo `modules`), a kody reguł muszą być unikalne.
+`rules` jest skrótem dla lokalnego packa; dla jawnego kontraktu użyj
+`rulePacks` z polami `id`, `version`, `requiredFacts` i `rules`.
 
 Domyślnie inspector pomija artefakty `node_modules`, `.next`, `dist`, `build`, `coverage`, `.turbo` i `.cache`. `include` oraz `exclude` odnoszą się do ścieżek względnych względem katalogu z `tsconfig.json`. `modules` pozwala opisać moduły, które nie mają fizycznego `index.ts`. Importy CSS/SCSS, obrazów i fontów są raportowane jako `asset`, a nie jako błędne `unresolved`.
 

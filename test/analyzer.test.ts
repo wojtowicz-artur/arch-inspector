@@ -140,6 +140,25 @@ test("loads custom declarative rules from project configuration", () => {
           },
         },
       ],
+      rulePacks: [
+        {
+          id: "project/pack",
+          version: "1.0.0",
+          requiredFacts: ["imports"],
+          rules: [
+            {
+              code: "project/pack-import",
+              source: "imports",
+              where: [{ field: "isInternal", operator: "eq", value: true }],
+              finding: {
+                category: "observation",
+                level: "info",
+                message: "pack: ${fromModule} imports ${toModule}.",
+              },
+            },
+          ],
+        },
+      ],
     },
     files: {
       "src/modules/a/index.ts": 'import { b } from "../b/index";\nexport const a = b;\n',
@@ -152,6 +171,7 @@ test("loads custom declarative rules from project configuration", () => {
     assert.equal(customFindings.length, 1);
     assert.equal(customFindings[0].file, "src/modules/a/index.ts");
     assert.equal(customFindings[0].message, "a imports b.");
+    assert.equal(snapshot.analysis.findings.filter((finding) => finding.code === "project/pack-import").length, 1);
   } finally {
     project.cleanup();
   }

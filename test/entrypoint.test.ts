@@ -2,6 +2,8 @@ import assert from "node:assert/strict";
 import test from "node:test";
 import {
   analyzeProject,
+  BUILTIN_RULE_PACK,
+  createRuleRegistry,
   diffSnapshots,
   evaluateRules,
   IR_CONTRACT,
@@ -88,4 +90,48 @@ test("accepts custom declarative rule specifications", () => {
   } finally {
     project.cleanup();
   }
+});
+
+test("builds a deterministic rule registry from versioned packs", () => {
+  const customRule: RuleSpec = {
+    code: "test/registry-rule",
+    source: "imports",
+    finding: {
+      category: "observation",
+      level: "info",
+      message: "registry rule",
+    },
+  };
+  const registry = createRuleRegistry([
+    {
+      id: "project/custom",
+      version: "1.0.0",
+      requiredFacts: ["imports"],
+      rules: [customRule],
+    },
+    BUILTIN_RULE_PACK,
+  ]);
+
+  assert.deepEqual(
+    registry.packs.map((pack) => pack.id),
+    ["arch-inspector/core", "project/custom"],
+  );
+  assert.deepEqual(registry.requiredFacts, ["cycles", "forbiddenDependencies", "imports", "modules"]);
+  assert.equal(registry.rules.length, BUILTIN_RULE_PACK.rules.length + 1);
+  assert.throws(
+    () =>
+      createRuleRegistry([
+        {
+          id: "project/incomplete",
+          version: "1.0.0",
+          requiredFacts: ["modules"],
+          rules: [customRule],
+        },
+      ]),
+    /does not declare required fact 'imports'/,
+  );
+  assert.throws(
+    () => createRuleRegistry([BUILTIN_RULE_PACK, { ...BUILTIN_RULE_PACK, id: "project/duplicate" }]),
+    /Duplicate rule code: architecture\/cycle/,
+  );
 });
