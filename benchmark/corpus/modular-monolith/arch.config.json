@@ -1,0 +1,12 @@
+{
+  "moduleRoots": ["src/modules"],
+  "boundaryZones": {
+    "ui": {
+      "from": ["ui"],
+      "allow": ["booking", "shared"],
+      "deny": ["infra"]
+    }
+  },
+  "noCycles": true,
+  "noDeepImports": true
+}

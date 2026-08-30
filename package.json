@@ -21,10 +21,11 @@
     "test": "npm run build && node --test dist/test/*.test.js",
     "inspect": "npm run build && node dist/src/cli.js inspect",
     "check": "npm run build && node dist/src/cli.js check",
-    "format": "oxfmt src test",
-    "format:check": "oxfmt --check src test",
-    "lint": "oxlint src test",
-    "lint:fix": "oxlint --fix src test",
+    "benchmark": "npm run build && node scripts/benchmark.mjs",
+    "format": "oxfmt src test scripts",
+    "format:check": "oxfmt --check src test scripts",
+    "lint": "oxlint src test scripts",
+    "lint:fix": "oxlint --fix src test scripts",
     "quality": "npm run format:check && npm run lint && npm test"
   },
   "dependencies": {

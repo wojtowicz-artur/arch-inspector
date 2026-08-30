@@ -1,0 +1,35 @@
+[
+  {
+    "name": "small",
+    "path": "small",
+    "comparison": "small",
+    "typeAware": false,
+    "minSourceFiles": 3,
+    "minImports": 3,
+    "minModules": 2
+  },
+  {
+    "name": "small-type-aware",
+    "path": "small-type-aware",
+    "comparison": "small",
+    "typeAware": true,
+    "minSourceFiles": 3,
+    "minImports": 3,
+    "minModules": 2,
+    "minSemanticEdges": 1
+  },
+  {
+    "name": "modular-monolith",
+    "path": "modular-monolith",
+    "comparison": "modular-monolith",
+    "typeAware": false,
+    "minSourceFiles": 7,
+    "minImports": 6,
+    "minModules": 6,
+    "requiredFindings": [
+      "architecture/boundary-violation",
+      "architecture/cycle",
+      "architecture/deep-import"
+    ]
+  }
+]

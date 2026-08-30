@@ -73,6 +73,7 @@ node dist/src/cli.js check ../ścieżka/do/projektu --fail-on cycles,deep-import
 node dist/src/cli.js diff main ../ścieżka/do/projektu --check
 node dist/src/cli.js audit main ../ścieżka/do/projektu
 node dist/src/cli.js audit main ../ścieżka/do/projektu --sarif --out architecture.sarif
+npm run benchmark
 ```
 
 `arch check` jest report-only, jeśli nie podano `--fail-on` i projekt nie ma
@@ -169,6 +170,11 @@ nad `allow`. Naruszenia są emitowane jako `architecture/boundary-violation`.
 rodzaj eksportu (`type`/`value`/`both`) i ujawnia rzeczywisty kształt
 statycznego kontraktu. Te dane są dostępne także jako `symbols` i `symbolKinds`
 w kolekcji `imports` dla deklaratywnych reguł.
+
+Wersjonowany benchmark corpus znajduje się w `benchmark/corpus`. `npm run
+benchmark` sprawdza minimalne fakty IR i deterministyczność snapshotu, a także
+raportuje medianę/p95 oraz orientacyjny narzut trybu type-aware. Czasy nie są
+progiem CI, ponieważ zależą od sprzętu i cache TypeScriptu.
 
 Domyślnie inspector pomija artefakty `node_modules`, `.next`, `dist`, `build`, `coverage`, `.turbo` i `.cache`. `include` oraz `exclude` odnoszą się do ścieżek względnych względem katalogu z `tsconfig.json`. `modules` pozwala opisać moduły, które nie mają fizycznego `index.ts`. Importy CSS/SCSS, obrazów i fontów są raportowane jako `asset`, a nie jako błędne `unresolved`. Import lokalny rozwiązany do pliku wyłączonego przez `include`/`exclude` ma stan `out-of-scope` i zachowuje `toFile`, dzięki czemu brak krawędzi nie jest mylony z brakiem pliku. Computed `import()`/`require()` są zachowywane jako krawędzie o niepewności `ambiguous` (wzorce template są oznaczane `*`), zamiast znikać z grafu.
 

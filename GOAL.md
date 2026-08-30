@@ -48,6 +48,25 @@ The core promise is:
 
 > **Start simple without giving up the ability to become structured later.**
 
+## 1.1 Current Product Boundary and Sequencing
+
+The current product is an **architecture inspector and policy gate**. Its first responsibility is to observe an existing TypeScript project, preserve the evidence behind architectural facts, and report trustworthy module boundaries, dependency edges, public API violations, cycles, and changes over time.
+
+The runtime-oriented ideas later in this document (`defineModule`, capabilities, providers, commands, workflows, lifecycle, and distribution) describe possible stages of the broader product. They are not commitments that all of those subsystems should exist, nor permission to build them ahead of demonstrated demand.
+
+Until the static architecture layer is dependable, work should prioritize:
+
+1. sound project and module discovery,
+2. explicit uncertainty instead of confident misclassification,
+3. correct public API and boundary enforcement,
+4. stable identities for snapshots, findings, and CI diffs,
+5. actionable diagnostics with traceable evidence,
+6. compatibility and migration rules for persisted IR.
+
+A result that is incomplete or uncertain must say so. In particular, the inspector MUST NOT classify an unresolved project-like dependency as external merely because resolution failed, treat a nested internal barrel as a public API by convention, or report a pre-existing violation as newly introduced only because its source location or display name changed.
+
+Static analysis is allowed to be conservative. When the tool cannot prove ownership, resolution, or public visibility, it should preserve the observation and confidence level so that policy can distinguish **known violation**, **known valid edge**, and **unknown**.
+
 ---
 
 # 2. The Problem We Are Solving
@@ -838,6 +857,8 @@ A user should not need Layer 4 to benefit from Layer 1.
 
 # 21. Example of the Desired Developer Experience
 
+The APIs in this section are illustrative syntax for progressive adoption, not a specification of the current public API. Introducing any of them still has to pass the decision filter in section 23 and should follow, rather than precede, a trustworthy inspection and boundary layer.
+
 Day 1:
 
 ```ts
@@ -918,6 +939,10 @@ A 20-file application does not feel like an enterprise system.
 ### Architectural mistakes become visible early
 
 Illegal dependencies, cycles, and accidental deep imports can be detected automatically.
+
+### Reports are trustworthy
+
+The inspector does not silently turn unresolved project dependencies into valid external edges, does not infer extra public APIs from internal folder structure, and does not create a new CI regression from location-only changes. Uncertainty is visible and backed by evidence.
 
 ### Modules remain understandable
 
