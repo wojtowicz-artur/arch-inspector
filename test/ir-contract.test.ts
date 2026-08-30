@@ -21,6 +21,7 @@ test("validates and verifies the current Architecture IR contract", () => {
     assert.doesNotThrow(() => verifySnapshotReceipt(snapshot, "IR 0.5 snapshot"));
     assert.equal(snapshot.irVersion, IR_VERSION);
     assert.equal(snapshot.receipt.toolVersion, "0.5.0");
+    assert.equal(snapshot.receipt.pipelineHash, sha256(snapshot.receipt.pipeline));
 
     const tampered = structuredClone(snapshot);
     tampered.receipt.snapshotId = "0".repeat(64);
@@ -29,6 +30,25 @@ test("validates and verifies the current Architecture IR contract", () => {
     const changedPipeline = structuredClone(snapshot);
     changedPipeline.receipt.pipelineHash = "0".repeat(64);
     assert.throws(() => verifySnapshotReceipt(changedPipeline), /invalid snapshot receipt/);
+
+    const changedManifest = structuredClone(snapshot);
+    changedManifest.receipt.pipeline.providers = [
+      ...changedManifest.receipt.pipeline.providers,
+      { id: "test/provider", version: "1.0.0" },
+    ];
+    const changedManifestBase = {
+      irVersion: changedManifest.irVersion,
+      project: changedManifest.project,
+      policy: changedManifest.policy,
+      source: changedManifest.source,
+      architecture: changedManifest.architecture,
+      analysis: changedManifest.analysis,
+    };
+    changedManifest.receipt.snapshotId = sha256({
+      ...changedManifestBase,
+      receipt: { ...changedManifest.receipt, snapshotId: "" },
+    });
+    assert.throws(() => verifySnapshotReceipt(changedManifest), /invalid snapshot receipt/);
   } finally {
     project.cleanup();
   }

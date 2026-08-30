@@ -165,6 +165,13 @@ test("snapshot loader validates the hardened IR shape and provenance", () => {
     const differentPipeline = structuredClone(snapshot);
     differentPipeline.receipt.pipelineHash = "0".repeat(64);
     assert.throws(() => diffSnapshots(snapshot, differentPipeline), /analysis pipeline differs/);
+
+    const differentManifest = structuredClone(snapshot);
+    differentManifest.receipt.pipeline.projectors = [
+      ...differentManifest.receipt.pipeline.projectors,
+      { id: "test/projector", version: "1.0.0" },
+    ];
+    assert.throws(() => diffSnapshots(snapshot, differentManifest), /analysis pipeline differs/);
   } finally {
     project.cleanup();
   }

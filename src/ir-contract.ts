@@ -36,6 +36,7 @@ export function validateArchitectureSnapshot(value: unknown, context = "Architec
 /** Verify the receipt after shape validation has succeeded. */
 export function verifySnapshotReceipt(snapshot: ArchitectureSnapshot, context = "Architecture snapshot"): void {
   const { receipt, ...base } = snapshot;
+  if (sha256(receipt.pipeline) !== receipt.pipelineHash) throw new SnapshotReceiptError(context);
   const expected = sha256({ ...base, receipt: { ...receipt, snapshotId: "" } });
   if (expected !== receipt.snapshotId) throw new SnapshotReceiptError(context);
 }

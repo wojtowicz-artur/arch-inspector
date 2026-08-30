@@ -151,7 +151,12 @@ function comparabilityReasons(before: ArchitectureSnapshot, after: ArchitectureS
   if (before.irVersion !== after.irVersion) reasons.push(`IR ${before.irVersion} != ${after.irVersion}`);
   if (before.receipt.toolVersion !== after.receipt.toolVersion)
     reasons.push(`tool ${before.receipt.toolVersion} != ${after.receipt.toolVersion}`);
-  if (before.receipt.pipelineHash !== after.receipt.pipelineHash) reasons.push("analysis pipeline differs");
+  if (
+    before.receipt.pipelineHash !== after.receipt.pipelineHash ||
+    canonicalStringify(before.receipt.pipeline) !== canonicalStringify(after.receipt.pipeline)
+  ) {
+    reasons.push("analysis pipeline differs");
+  }
   if (before.receipt.configHash !== after.receipt.configHash) reasons.push("analysis configuration differs");
   if (before.receipt.compilerOptionsHash !== after.receipt.compilerOptionsHash) reasons.push("compiler options differ");
   if (before.project.tsconfig !== after.project.tsconfig) reasons.push("tsconfig path differs");
