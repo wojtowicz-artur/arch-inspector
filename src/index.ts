@@ -45,6 +45,7 @@ export type {
   FactOrigin,
   FileOwnership,
   ImportKind,
+  ImportedSymbolKind,
   ModuleEdge,
   Provenance,
   Resolution,
@@ -71,3 +72,5 @@ export type {
 } from "./rules.js";
 export type { RuleFlag, RulePack, RuleSource } from "./rule-schema.js";
 export type { InspectorConfig, ModuleIdStrategy } from "./project.js";
+export { buildTypeAwareImportIndex } from "./type-aware.js";
+export type { TypeAwareImportIndex, TypeAwareImportInfo, TypeAwareImportSymbol } from "./type-aware.js";

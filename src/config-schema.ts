@@ -40,6 +40,8 @@ export const inspectorConfigSchema = z
     exclude: z.array(z.string()).optional(),
     moduleRoots: z.array(z.string()).optional(),
     moduleIdStrategy: moduleIdStrategySchema.optional(),
+    /** Opt in to TypeScript checker metadata for static imports. */
+    typeAware: z.boolean().optional(),
     modules: z.record(z.string(), moduleDeclarationSchema).optional(),
     publicEntrypoints: z.record(z.string(), z.array(z.string())).optional(),
     noCycles: z.boolean().optional(),

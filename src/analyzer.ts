@@ -13,6 +13,7 @@ import { inferModules } from "./modules.js";
 import { discoverProject, relativeToRoot, type DiscoveredProject } from "./project.js";
 import { evaluateRules } from "./rules.js";
 import { canonicalStringify, sha256 } from "./stable.js";
+import { buildTypeAwareImportIndex } from "./type-aware.js";
 
 function languageFor(file: string): "typescript" | "javascript" {
   return /\.(?:jsx?|mjs|cjs)$/i.test(file) ? "javascript" : "typescript";
@@ -115,7 +116,8 @@ export function analyzeProject(inputPath = "."): ArchitectureSnapshot {
     [...inferred.fileToModule.entries()].map(([file, module]) => [relativeToRoot(project.root, file), module]),
   );
   const moduleEntrypoints = new Map(inferred.modules.map((module) => [module.id, new Set(module.entrypoints)]));
-  const imports = collectEdges(project);
+  const typeAware = project.config.typeAware ? buildTypeAwareImportIndex(project) : undefined;
+  const imports = collectEdges(project, typeAware);
   const moduleEdges = buildModuleEdges(imports, relativeFileToModule, moduleEntrypoints);
   const cycles = findCycles(inferred.modules, moduleEdges);
   const findings: ArchitectureFinding[] = evaluateRules({

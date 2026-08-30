@@ -254,6 +254,47 @@ test("retains computed dynamic dependencies as ambiguous edges", () => {
   }
 });
 
+test("adds optional TypeScript checker evidence for imported exports", () => {
+  const project = createProject({
+    archConfig: { typeAware: true },
+    files: {
+      "src/app.ts":
+        'import { type User, value as importedValue } from "./dep";\nexport { type User as PublicUser, value } from "./dep";\nexport const result: User = { id: importedValue };\n',
+      "src/dep.ts": "export type User = { id: number };\nexport const value = 1;\n",
+    },
+  });
+  try {
+    const imports = analyzeProject(project.root).source.imports;
+    const direct = imports.find((edge) => edge.importKind === "static");
+    const reExport = imports.find((edge) => edge.importKind === "export");
+    assert.deepEqual(direct?.symbols, [
+      { name: "User", kind: "type" },
+      { name: "value", kind: "value" },
+    ]);
+    assert.deepEqual(reExport?.symbols, [
+      { name: "User", kind: "type" },
+      { name: "value", kind: "value" },
+    ]);
+  } finally {
+    project.cleanup();
+  }
+});
+
+test("does not build checker metadata unless type-aware mode is enabled", () => {
+  const project = createProject({
+    files: {
+      "src/app.ts": 'import { value } from "./dep";\nexport const result = value;\n',
+      "src/dep.ts": "export const value = 1;\n",
+    },
+  });
+  try {
+    const edge = analyzeProject(project.root).source.imports[0];
+    assert.equal(edge.symbols, undefined);
+  } finally {
+    project.cleanup();
+  }
+});
+
 test("supports relative-path IDs for all inferred modules", () => {
   const project = createProject({
     archConfig: { moduleIdStrategy: "relative-path" },

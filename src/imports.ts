@@ -2,6 +2,7 @@ import path from "node:path";
 import ts from "typescript";
 import type { ImportKind, SourceImport } from "./ir.js";
 import { relativeToRoot, type DiscoveredProject } from "./project.js";
+import { typeAwareImportKey, type TypeAwareImportIndex } from "./type-aware.js";
 
 interface RawImport {
   specifier: string;
@@ -113,7 +114,7 @@ function resolveModule(
   return resolved;
 }
 
-export function collectEdges(project: DiscoveredProject): SourceImport[] {
+export function collectEdges(project: DiscoveredProject, typeAware?: TypeAwareImportIndex): SourceImport[] {
   const projectFiles = new Set(project.files.map((file) => path.normalize(file)));
   const edges: SourceImport[] = [];
 
@@ -159,6 +160,7 @@ export function collectEdges(project: DiscoveredProject): SourceImport[] {
       ].join("\0");
       const occurrence = occurrences.get(occurrenceKey) ?? 0;
       occurrences.set(occurrenceKey, occurrence + 1);
+      const semantic = typeAware?.get(typeAwareImportKey(file, current.position));
       edges.push({
         id: `${occurrenceKey}\0${occurrence}`,
         fromFile,
@@ -168,6 +170,7 @@ export function collectEdges(project: DiscoveredProject): SourceImport[] {
         resolution,
         resolutionConfidence,
         typeOnly: current.typeOnly,
+        ...(semantic ? { symbols: semantic.symbols } : {}),
         location: { line: location.line + 1, column: location.character + 1 },
         provenance: {
           origin: "observed",

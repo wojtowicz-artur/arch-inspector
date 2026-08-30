@@ -42,6 +42,16 @@ const sourceImportSchema = z
     resolution: z.enum(["internal", "external", "asset", "unresolved", "out-of-scope"]),
     resolutionConfidence: z.enum(["exact", "syntactic", "ambiguous"]).optional(),
     typeOnly: z.boolean(),
+    symbols: z
+      .array(
+        z
+          .object({
+            name: z.string(),
+            kind: z.enum(["type", "value", "both", "unknown"]),
+          })
+          .strict(),
+      )
+      .optional(),
     location: z
       .object({
         line: z.number().int().positive(),

@@ -10,6 +10,7 @@ export const IR_CONTRACT = {
 export type Resolution = "internal" | "external" | "asset" | "unresolved" | "out-of-scope";
 export type ResolutionConfidence = "exact" | "syntactic" | "ambiguous";
 export type ImportKind = "static" | "export" | "dynamic" | "require";
+export type ImportedSymbolKind = "type" | "value" | "both" | "unknown";
 export type DiagnosticLevel = "error" | "warning" | "info";
 export type DiagnosticCategory = "violation" | "observation";
 export type FactOrigin = "observed" | "declared" | "inferred" | "derived";
@@ -65,6 +66,11 @@ export interface SourceImport {
   /** Whether the resolver proved the target or the classification is heuristic. */
   resolutionConfidence?: ResolutionConfidence;
   typeOnly: boolean;
+  /** Optional TypeScript checker evidence for statically imported exports. */
+  symbols?: Array<{
+    name: string;
+    kind: ImportedSymbolKind;
+  }>;
   location: {
     line: number;
     column: number;

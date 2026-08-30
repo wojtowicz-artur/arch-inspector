@@ -11,6 +11,9 @@ Inspector nie wymaga adnotacji w analizowanym kodzie. Czyta istniejące `tsconfi
 - importy static, export-from, dynamic `import()` i proste `require()`; także
   jawne obserwacje dynamicznych importów, których nie da się rozwiązać statycznie;
 - rozróżnienie importów internal/external/unresolved/out-of-scope oraz type-only;
+- opcjonalny tryb `typeAware`, który uruchamia TypeScript checker i dopisuje do
+  statycznych krawędzi nazwy importowanych eksportów oraz ich rodzaj (`type`,
+  `value`, `both`, `unknown`);
 - module graph, cykle, fan-in/fan-out;
 - wykrywanie deep imports względem `index.ts` modułu;
 - deterministyczny JSON z wersjonowanym `irVersion` i snapshot receipt; moduły mają
@@ -109,6 +112,7 @@ Konfiguracja opcjonalna: `arch.config.json` w katalogu projektu:
   "include": ["src/**"],
   "exclude": ["src/legacy/**"],
   "moduleIdStrategy": "compact",
+  "typeAware": false,
   "modules": {
     "booking": {
       "root": "src/modules/booking",
@@ -160,6 +164,11 @@ inferowanych. Jawnie zadeklarowane moduły zawsze zachowują skonfigurowane ID.
 dla każdej pary modułów. `from`, `allow` i `deny` przyjmują ID modułów, ich
 `stableId`/korzenie oraz proste wzorce `*` i `**`; jawny `deny` ma pierwszeństwo
 nad `allow`. Naruszenia są emitowane jako `architecture/boundary-violation`.
+`typeAware` jest domyślnie wyłączone; po włączeniu korzysta z programu i
+`TypeChecker` TypeScriptu, więc zwiększa koszt analizy, ale pozwala odróżnić
+rodzaj eksportu (`type`/`value`/`both`) i ujawnia rzeczywisty kształt
+statycznego kontraktu. Te dane są dostępne także jako `symbols` i `symbolKinds`
+w kolekcji `imports` dla deklaratywnych reguł.
 
 Domyślnie inspector pomija artefakty `node_modules`, `.next`, `dist`, `build`, `coverage`, `.turbo` i `.cache`. `include` oraz `exclude` odnoszą się do ścieżek względnych względem katalogu z `tsconfig.json`. `modules` pozwala opisać moduły, które nie mają fizycznego `index.ts`. Importy CSS/SCSS, obrazów i fontów są raportowane jako `asset`, a nie jako błędne `unresolved`. Import lokalny rozwiązany do pliku wyłączonego przez `include`/`exclude` ma stan `out-of-scope` i zachowuje `toFile`, dzięki czemu brak krawędzi nie jest mylony z brakiem pliku. Computed `import()`/`require()` są zachowywane jako krawędzie o niepewności `ambiguous` (wzorce template są oznaczane `*`), zamiast znikać z grafu.
 
