@@ -56,8 +56,9 @@ node dist/src/cli.js audit main .
 
 Diff pokazuje dodane/usunięte moduły, ownership plików, importy, zależności,
 cykle, findings oraz zmiany metryk. Snapshoty z inną konfiguracją lub opcjami
-kompilatora są odrzucane jako nieporównywalne. `hasRegressions` jest `true`, gdy
-pojawił się nowy cykl albo nowe naruszenie reguły.
+kompilatora są odrzucane jako nieporównywalne. Receipt akceptuje poprawne wersje
+semver narzędzia, ale różne wersje analizatora nadal są nieporównywalne w diffie.
+`hasRegressions` jest `true`, gdy pojawił się nowy cykl albo nowe naruszenie reguły.
 
 ## Uruchomienie
 
@@ -103,6 +104,12 @@ granicach zawierają ścieżkę do niepoprawnego pola zamiast cichego rzutowania
 danych. Aktualny kontrakt IR 0.4 jest jawnie `exact`: receipt jest wymagany,
 a nieznane pola oraz starsze wersje IR są odrzucane. Migracja z wcześniejszych
 wersji wymaga osobnego adaptera poza biblioteką.
+
+Wewnętrzny pipeline analizatora zbiera wersjonowane batch’e faktów przez
+`FactProvider`, przechowuje je w deterministycznym fact store i buduje projekcje
+przez niemutowalne `Projector`. To są na razie wewnętrzne kontrakty; publicznym
+mechanizmem rozszerzeń pozostaje `RulePack`, dopóki nie pojawią się niezależne
+przypadki uzasadniające stabilne Plugin SDK.
 
 `arch graph` emituje deterministyczny graf modułów w formacie Graphviz DOT. Węzły
 uczestniczące w cyklu są wyróżnione, a etykiety krawędzi pokazują liczbę

@@ -329,6 +329,86 @@ test("does not reintroduce an existing cycle when a module name becomes namespac
   }
 });
 
+test("does not reintroduce a deep import when a module name becomes namespaced", () => {
+  const project = createProject({
+    files: {
+      "src/modules/auth/index.ts": 'import { b } from "../b/internal";\nexport const auth = b;\n',
+      "src/modules/b/index.ts": "export const b = true;\n",
+      "src/modules/b/internal.ts": "export const b = true;\n",
+    },
+  });
+  try {
+    const before = analyzeProject(project.root);
+    assert.equal(before.analysis.findings.filter((finding) => finding.code === "architecture/deep-import").length, 1);
+
+    fs.mkdirSync(path.join(project.root, "src/features/auth"), { recursive: true });
+    fs.writeFileSync(
+      path.join(project.root, "src/features/auth/index.ts"),
+      "export const featureAuth = true;\n",
+      "utf8",
+    );
+    const after = analyzeProject(project.root);
+    const diff = diffSnapshots(before, after);
+
+    assert.equal(
+      diff.analysis.findings.added.some((finding) => finding.code === "architecture/deep-import"),
+      false,
+    );
+    assert.equal(
+      diff.analysis.findings.removed.some((finding) => finding.code === "architecture/deep-import"),
+      false,
+    );
+    assert.equal(
+      diff.introducedViolations.some((finding) => finding.code === "architecture/deep-import"),
+      false,
+    );
+    assert.equal(
+      diff.analysis.findings.changed.filter((finding) => finding.after.code === "architecture/deep-import").length,
+      1,
+    );
+    assert.equal(diff.hasRegressions, false);
+  } finally {
+    project.cleanup();
+  }
+});
+
+test("does not reintroduce a cycle when a redundant module edge is added", () => {
+  const project = createProject({
+    files: {
+      "src/modules/a/index.ts": 'import { b } from "../b";\nexport const a = b;\n',
+      "src/modules/b/index.ts": 'import { a } from "../a";\nexport const b = a;\n',
+    },
+  });
+  try {
+    const before = analyzeProject(project.root);
+    assert.equal(before.analysis.cycles.length, 1);
+    fs.writeFileSync(
+      path.join(project.root, "src/modules/a/index.ts"),
+      'import { b } from "../b";\nimport { b as again } from "../b";\nexport const a = b && again;\n',
+      "utf8",
+    );
+    const after = analyzeProject(project.root);
+    const diff = diffSnapshots(before, after);
+
+    assert.equal(diff.analysis.cycles.added.length, 0);
+    assert.equal(
+      diff.analysis.findings.added.some((finding) => finding.code === "architecture/cycle"),
+      false,
+    );
+    assert.equal(
+      diff.introducedViolations.some((finding) => finding.code === "architecture/cycle"),
+      false,
+    );
+    assert.equal(
+      diff.analysis.findings.changed.filter((finding) => finding.after.code === "architecture/cycle").length,
+      1,
+    );
+    assert.equal(diff.hasRegressions, false);
+  } finally {
+    project.cleanup();
+  }
+});
+
 test("preserves type-only import and export semantics", () => {
   const project = createProject({
     files: {

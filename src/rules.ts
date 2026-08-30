@@ -36,7 +36,7 @@ export interface RuleContext {
 export interface RuleInput {
   config: InspectorConfig;
   modules: ArchitectureModule[];
-  /** Module edges used to anchor cycle findings to stable source-edge IDs. */
+  /** Optional module-edge projection for rules that need edge-level context. */
   moduleEdges?: ModuleEdge[];
   imports: SourceImport[];
   fileToModule: Map<string, string>;
@@ -345,48 +345,47 @@ function cycleIdentity(
   cycle: ArchitectureCycle,
   modules: readonly ArchitectureModule[],
   moduleEdges: readonly ModuleEdge[],
-): { derivedFrom: string[]; evidence: EvidenceRef[] } {
+): {
+  derivedFrom: string[];
+  evidence: EvidenceRef[];
+} {
   const modulesById = new Map(modules.map((module) => [module.id, module]));
-  const moduleEdgesById = new Map(moduleEdges.map((edge) => [edge.id, edge]));
-  const sourceEdgeIds = [
+  const stableModules = [
     ...new Set(
-      cycle.edgeIds.flatMap((edgeId) => {
-        const edge = moduleEdgesById.get(edgeId);
-        return edge?.sourceEdgeIds.length ? edge.sourceEdgeIds : (edge?.provenance.derivedFrom ?? []);
+      cycle.modules.map((id) => {
+        const module = modulesById.get(id);
+        return module?.stableId ?? module?.root ?? id;
       }),
     ),
   ].sort(compare);
-  if (sourceEdgeIds.length > 0) {
+  if (stableModules.length > 0) {
+    const moduleEdgesById = new Map(moduleEdges.map((edge) => [edge.id, edge]));
+    const sourceEdgeIds = [
+      ...new Set(
+        cycle.edgeIds.flatMap((edgeId) => {
+          const edge = moduleEdgesById.get(edgeId);
+          return edge?.sourceEdgeIds.length ? edge.sourceEdgeIds : (edge?.provenance.derivedFrom ?? []);
+        }),
+      ),
+    ].sort(compare);
     return {
-      derivedFrom: sourceEdgeIds,
-      evidence: sourceEdgeIds.map((id) => ({ kind: "source-edge" as const, id })),
+      derivedFrom: stableModules,
+      evidence:
+        sourceEdgeIds.length > 0
+          ? sourceEdgeIds.map((id) => ({ kind: "source-edge" as const, id }))
+          : stableModules.map((id) => ({ kind: "module" as const, id })),
     };
   }
 
-  const stableModuleEdges = cycle.edgeIds
-    .map((edgeId) => moduleEdgesById.get(edgeId))
-    .filter((edge): edge is ModuleEdge => edge !== undefined)
-    .map((edge) => {
-      const from = modulesById.get(edge.from);
-      const to = modulesById.get(edge.to);
-      return `${from?.stableId ?? from?.root ?? edge.from}\0${to?.stableId ?? to?.root ?? edge.to}`;
-    })
-    .sort(compare);
-  if (stableModuleEdges.length > 0) {
-    const derivedFrom = stableModuleEdges.map((id) => `module-edge:${id}`);
+  const fallback = cycle.edgeIds.map((edgeId) => `cycle-edge:${edgeId}`).sort(compare);
+  if (fallback.length > 0) {
     return {
-      derivedFrom,
-      evidence: stableModuleEdges.map((id) => ({ kind: "module-edge" as const, id })),
+      derivedFrom: fallback,
+      evidence: fallback.map((id) => ({ kind: "module-edge" as const, id })),
     };
   }
 
-  const stableModules = cycle.modules
-    .map((id) => {
-      const module = modulesById.get(id);
-      return module?.stableId ?? module?.root ?? id;
-    })
-    .sort(compare);
-  const id = `cycle:${stableModules.join("\0")}`;
+  const id = "cycle:empty";
   return { derivedFrom: [id], evidence: [{ kind: "module-edge" as const, id }] };
 }
 

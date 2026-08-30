@@ -1,5 +1,5 @@
 import { z } from "zod";
-import { IR_CONTRACT, TOOL_VERSION, type ArchitectureSnapshot } from "./ir.js";
+import { IR_CONTRACT, type ArchitectureSnapshot } from "./ir.js";
 
 const factOriginSchema = z.enum(["observed", "declared", "inferred", "derived"]);
 const evidenceKindSchema = z.enum(["file", "source-edge", "module", "module-edge", "config", "rule"]);
@@ -142,11 +142,20 @@ const architectureFindingSchema = z
   })
   .strict();
 
+// Keep the IR contract stable across patch releases of the analyzer while
+// rejecting non-semver values that would make receipt provenance ambiguous.
+const semverSchema = z
+  .string()
+  .regex(
+    /^(0|[1-9]\d*)\.(0|[1-9]\d*)\.(0|[1-9]\d*)(?:-(?:0|[1-9]\d*|[0-9A-Za-z-]*[A-Za-z-][0-9A-Za-z-]*)(?:\.(?:0|[1-9]\d*|[0-9A-Za-z-]*[A-Za-z-][0-9A-Za-z-]*))*)?(?:\+[0-9A-Za-z-]+(?:\.[0-9A-Za-z-]+)*)?$/,
+    "must be a valid semantic version",
+  );
+
 const snapshotReceiptSchema = z
   .object({
     snapshotId: z.string().regex(/^[a-f0-9]{64}$/),
     tool: z.literal("arch-inspector"),
-    toolVersion: z.literal(TOOL_VERSION),
+    toolVersion: semverSchema,
     irVersion: z.literal(IR_CONTRACT.version),
     configHash: z.string().regex(/^[a-f0-9]{64}$/),
     compilerOptionsHash: z.string().regex(/^[a-f0-9]{64}$/),

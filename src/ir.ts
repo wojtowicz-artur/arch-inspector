@@ -36,7 +36,8 @@ export interface Provenance {
 export interface SnapshotReceipt {
   snapshotId: string;
   tool: "arch-inspector";
-  toolVersion: typeof TOOL_VERSION;
+  /** Semver of the analyzer that produced this snapshot. */
+  toolVersion: string;
   irVersion: typeof IR_VERSION;
   configHash: string;
   compilerOptionsHash: string;

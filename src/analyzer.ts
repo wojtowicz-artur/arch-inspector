@@ -1,5 +1,5 @@
 import path from "node:path";
-import { collectEdges, type ModuleResolutionCache, type SourceAstCache } from "./imports.js";
+import type { ModuleResolutionCache, SourceAstCache } from "./imports.js";
 import {
   IR_VERSION,
   TOOL_VERSION,
@@ -7,23 +7,14 @@ import {
   type ArchitectureMetrics,
   type ArchitectureSnapshot,
   type SourceFile,
+  type SourceImport,
 } from "./ir.js";
 import { assertArchitectureSnapshot } from "./ir-contract.js";
-import { buildModuleEdges, findCycles } from "./graph.js";
-import { inferModules } from "./modules.js";
 import { discoverProject, isWithin, relativeToRoot, type DiscoveredProject } from "./project.js";
+import { collectBuiltInFacts, moduleGraphProjector, ownershipProjector, type ModuleInferenceFact } from "./pipeline.js";
 import { BUILTIN_RULES, evaluateRules } from "./rules.js";
 import { sha256 } from "./stable.js";
 import { buildTypeAwareImportIndex, type TypeAwareImportIndex } from "./type-aware.js";
-
-function languageFor(file: string): "typescript" | "javascript" {
-  return /\.(?:jsx?|mjs|cjs)$/i.test(file) ? "javascript" : "typescript";
-}
-
-function linesIn(file: string, contents: ReadonlyMap<string, string>): number {
-  const text = contents.get(file) ?? "";
-  return text === "" ? 0 : text.split(/\r?\n/).length;
-}
 
 function highest(values: Map<string, number>): { module: string; value: number } | null {
   if (values.size === 0) return null;
@@ -61,24 +52,6 @@ function metrics(
     maxFanOut: highest(fanOut),
     provenance: { origin: "derived", analyzer: "architecture-metrics" },
   };
-}
-
-function sourceFiles(project: DiscoveredProject): SourceFile[] {
-  return project.files
-    .map((file) => {
-      const relative = relativeToRoot(project.root, file);
-      return {
-        path: relative,
-        language: languageFor(file),
-        lines: linesIn(file, project.fileContents),
-        provenance: {
-          origin: "observed" as const,
-          analyzer: "typescript-source",
-          evidence: [{ kind: "file" as const, id: relative, file: relative }],
-        },
-      };
-    })
-    .sort((a, b) => a.path.localeCompare(b.path));
 }
 
 function inputHash(project: DiscoveredProject): string {
@@ -184,33 +157,31 @@ function analyzeDiscoveredProject(
   sourceAstCache: SourceAstCache,
   resolutionCache: ModuleResolutionCache,
 ): ArchitectureSnapshot {
-  const inferred = inferModules(project);
-  const relativeFileToModule = new Map(
-    [...inferred.fileToModule.entries()].map(([file, module]) => [relativeToRoot(project.root, file), module]),
-  );
-  const moduleEntrypoints = new Map(inferred.modules.map((module) => [module.id, new Set(module.entrypoints)]));
-  const imports = collectEdges(project, typeAware, sourceAstCache, resolutionCache);
-  const moduleEdges = buildModuleEdges(imports, relativeFileToModule, moduleEntrypoints);
-  const cycles = findCycles(inferred.modules, moduleEdges);
+  const factStore = collectBuiltInFacts({ project, typeAware, sourceAstCache, resolutionCache });
+  const files = [...factStore.facts<SourceFile>("source.files")];
+  const imports = [...factStore.facts<SourceImport>("source.imports")];
+  const moduleFacts = factStore.requireOne<ModuleInferenceFact>("architecture.module-inference");
+  const moduleGraph = moduleGraphProjector.project({
+    modules: moduleFacts.modules,
+    imports,
+    fileToModule: moduleFacts.fileToModule,
+    moduleEntrypoints: moduleFacts.moduleEntrypoints,
+  });
+  const { moduleEdges, cycles } = moduleGraph;
   const findings: ArchitectureFinding[] = evaluateRules({
     config: project.config,
-    modules: inferred.modules,
+    modules: [...moduleFacts.modules],
     moduleEdges,
     imports,
-    fileToModule: relativeFileToModule,
-    moduleEntrypoints,
+    fileToModule: new Map(moduleFacts.fileToModule),
+    moduleEntrypoints: new Map(
+      [...moduleFacts.moduleEntrypoints.entries()].map(
+        ([module, entrypoints]) => [module, new Set(entrypoints)] as const,
+      ),
+    ),
     cycles,
   });
-  const files = sourceFiles(project);
-  const ownership = files.map((file) => ({
-    file: file.path,
-    module: relativeFileToModule.get(file.path)!,
-    provenance: {
-      origin: "inferred" as const,
-      analyzer: "module-inference",
-      evidence: [{ kind: "file" as const, id: file.path, file: file.path }],
-    },
-  }));
+  const ownership = ownershipProjector.project({ files, fileToModule: moduleFacts.fileToModule });
   const projectFacts = {
     root: ".",
     tsconfig: relativeToRoot(project.root, project.tsconfigPath),
@@ -237,14 +208,14 @@ function analyzeDiscoveredProject(
     provenance: { origin: "observed" as const, analyzer: "typescript-source" },
   };
   const architecture = {
-    modules: inferred.modules,
+    modules: [...moduleFacts.modules],
     ownership,
     moduleEdges,
     provenance: { origin: "derived" as const, analyzer: "module-projection" },
   };
   const analysis = {
     cycles,
-    metrics: metrics(project, inferred.modules, imports, moduleEdges, cycles),
+    metrics: metrics(project, [...moduleFacts.modules], imports, moduleEdges, cycles),
     findings,
     provenance: { origin: "derived" as const, analyzer: "architecture-analysis" },
   };
