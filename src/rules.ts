@@ -213,7 +213,7 @@ export const BUILTIN_RULES: readonly RuleSpec[] = [
 
 export const BUILTIN_RULE_PACK: RulePack = {
   id: "arch-inspector/core",
-  version: "0.4.0",
+  version: "0.5.0",
   requiredFacts: ["cycles", "imports", "forbiddenDependencies", "modules"],
   rules: [...BUILTIN_RULES],
 };

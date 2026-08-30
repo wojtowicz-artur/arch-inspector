@@ -151,16 +151,20 @@ test("snapshot loader validates the hardened IR shape and provenance", () => {
     const malformed = JSON.parse(JSON.stringify(snapshot)) as { source: { provenance?: unknown } };
     delete malformed.source.provenance;
     fs.writeFileSync(snapshotPath, JSON.stringify(malformed), "utf8");
-    assert.throws(() => loadSnapshot(snapshotPath), /Architecture IR 0\.4 snapshot/);
+    assert.throws(() => loadSnapshot(snapshotPath), /Architecture IR 0\.5 snapshot/);
 
     const unsupported = JSON.parse(JSON.stringify(snapshot)) as { irVersion: string };
     unsupported.irVersion = "0.3";
     fs.writeFileSync(snapshotPath, JSON.stringify(unsupported), "utf8");
-    assert.throws(() => loadSnapshot(snapshotPath), /Architecture IR 0\.4 snapshot/);
+    assert.throws(() => loadSnapshot(snapshotPath), /Architecture IR 0\.5 snapshot/);
 
     const incomparable = structuredClone(snapshot);
     incomparable.receipt.configHash = "different";
     assert.throws(() => diffSnapshots(snapshot, incomparable), /not comparable/);
+
+    const differentPipeline = structuredClone(snapshot);
+    differentPipeline.receipt.pipelineHash = "0".repeat(64);
+    assert.throws(() => diffSnapshots(snapshot, differentPipeline), /analysis pipeline differs/);
   } finally {
     project.cleanup();
   }

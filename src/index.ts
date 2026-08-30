@@ -51,6 +51,8 @@ export type {
   ImportedSymbolKind,
   ModuleEdge,
   ModuleEdgeVisibility,
+  PipelineComponent,
+  PipelineManifest,
   Provenance,
   Resolution,
   ResolutionConfidence,

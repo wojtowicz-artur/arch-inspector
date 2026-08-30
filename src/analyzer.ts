@@ -11,7 +11,16 @@ import {
 } from "./ir.js";
 import { assertArchitectureSnapshot } from "./ir-contract.js";
 import { discoverProject, isWithin, relativeToRoot, type DiscoveredProject } from "./project.js";
-import { collectBuiltInFacts, moduleGraphProjector, ownershipProjector, type ModuleInferenceFact } from "./pipeline.js";
+import {
+  BUILTIN_PIPELINE,
+  BUILTIN_FACT_PROVIDERS,
+  clonePipelineManifest,
+  collectFacts,
+  hashPipeline,
+  moduleGraphProjector,
+  ownershipProjector,
+  type ModuleInferenceFact,
+} from "./pipeline.js";
 import { BUILTIN_RULES, evaluateRules } from "./rules.js";
 import { sha256 } from "./stable.js";
 import { buildTypeAwareImportIndex, type TypeAwareImportIndex } from "./type-aware.js";
@@ -101,6 +110,7 @@ function createReceipt(
   base: Omit<ArchitectureSnapshot, "receipt">,
   project: DiscoveredProject,
 ): ArchitectureSnapshot["receipt"] {
+  const pipeline = clonePipelineManifest(BUILTIN_PIPELINE);
   const receiptBase = {
     tool: "arch-inspector" as const,
     toolVersion: TOOL_VERSION,
@@ -111,6 +121,8 @@ function createReceipt(
       configurations: normalizedCompilerContexts(project),
     }),
     inputHash: inputHash(project),
+    pipeline,
+    pipelineHash: hashPipeline(pipeline),
   };
   return {
     ...receiptBase,
@@ -157,15 +169,19 @@ function analyzeDiscoveredProject(
   sourceAstCache: SourceAstCache,
   resolutionCache: ModuleResolutionCache,
 ): ArchitectureSnapshot {
-  const factStore = collectBuiltInFacts({ project, typeAware, sourceAstCache, resolutionCache });
+  const factStore = collectFacts({ project, typeAware, sourceAstCache, resolutionCache }, BUILTIN_FACT_PROVIDERS);
   const files = [...factStore.facts<SourceFile>("source.files")];
   const imports = [...factStore.facts<SourceImport>("source.imports")];
   const moduleFacts = factStore.requireOne<ModuleInferenceFact>("architecture.module-inference");
+  const fileToModule = new Map(moduleFacts.fileToModule);
+  const moduleEntrypoints = new Map(
+    moduleFacts.moduleEntrypoints.map(([module, entrypoints]) => [module, new Set(entrypoints)] as const),
+  );
   const moduleGraph = moduleGraphProjector.project({
     modules: moduleFacts.modules,
     imports,
-    fileToModule: moduleFacts.fileToModule,
-    moduleEntrypoints: moduleFacts.moduleEntrypoints,
+    fileToModule,
+    moduleEntrypoints,
   });
   const { moduleEdges, cycles } = moduleGraph;
   const findings: ArchitectureFinding[] = evaluateRules({
@@ -173,15 +189,11 @@ function analyzeDiscoveredProject(
     modules: [...moduleFacts.modules],
     moduleEdges,
     imports,
-    fileToModule: new Map(moduleFacts.fileToModule),
-    moduleEntrypoints: new Map(
-      [...moduleFacts.moduleEntrypoints.entries()].map(
-        ([module, entrypoints]) => [module, new Set(entrypoints)] as const,
-      ),
-    ),
+    fileToModule,
+    moduleEntrypoints,
     cycles,
   });
-  const ownership = ownershipProjector.project({ files, fileToModule: moduleFacts.fileToModule });
+  const ownership = ownershipProjector.project({ files, fileToModule });
   const projectFacts = {
     root: ".",
     tsconfig: relativeToRoot(project.root, project.tsconfigPath),

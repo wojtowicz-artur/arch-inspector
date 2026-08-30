@@ -17,14 +17,18 @@ test("validates and verifies the current Architecture IR contract", () => {
   const project = createSampleProject();
   try {
     const snapshot = analyzeProject(project.root);
-    assert.doesNotThrow(() => validateArchitectureSnapshot(snapshot, "IR 0.4 snapshot"));
-    assert.doesNotThrow(() => verifySnapshotReceipt(snapshot, "IR 0.4 snapshot"));
+    assert.doesNotThrow(() => validateArchitectureSnapshot(snapshot, "IR 0.5 snapshot"));
+    assert.doesNotThrow(() => verifySnapshotReceipt(snapshot, "IR 0.5 snapshot"));
     assert.equal(snapshot.irVersion, IR_VERSION);
-    assert.equal(snapshot.receipt.toolVersion, "0.4.0");
+    assert.equal(snapshot.receipt.toolVersion, "0.5.0");
 
     const tampered = structuredClone(snapshot);
     tampered.receipt.snapshotId = "0".repeat(64);
     assert.throws(() => verifySnapshotReceipt(tampered), /invalid snapshot receipt/);
+
+    const changedPipeline = structuredClone(snapshot);
+    changedPipeline.receipt.pipelineHash = "0".repeat(64);
+    assert.throws(() => verifySnapshotReceipt(changedPipeline), /invalid snapshot receipt/);
   } finally {
     project.cleanup();
   }
@@ -43,21 +47,21 @@ test("accepts semver patch tool versions but keeps analyzer versions incomparabl
       architecture: patched.architecture,
       analysis: patched.analysis,
     };
-    patched.receipt.toolVersion = "0.4.1";
+    patched.receipt.toolVersion = "0.5.1";
     patched.receipt.snapshotId = sha256({
       ...snapshotBase,
       receipt: { ...patched.receipt, snapshotId: "" },
     });
 
-    assert.doesNotThrow(() => validateArchitectureSnapshot(patched, "IR 0.4.1 snapshot"));
-    assert.doesNotThrow(() => verifySnapshotReceipt(patched, "IR 0.4.1 snapshot"));
-    const snapshotPath = path.join(project.root, "architecture-0.4.1.json");
+    assert.doesNotThrow(() => validateArchitectureSnapshot(patched, "IR 0.5.1 snapshot"));
+    assert.doesNotThrow(() => verifySnapshotReceipt(patched, "IR 0.5.1 snapshot"));
+    const snapshotPath = path.join(project.root, "architecture-0.5.1.json");
     fs.writeFileSync(snapshotPath, JSON.stringify(patched), "utf8");
     assert.deepEqual(loadSnapshot(snapshotPath), patched);
-    assert.throws(() => diffSnapshots(snapshot, patched), /tool 0\.4\.0 != 0\.4\.1/);
+    assert.throws(() => diffSnapshots(snapshot, patched), /tool 0\.5\.0 != 0\.5\.1/);
 
     const invalid = structuredClone(patched);
-    invalid.receipt.toolVersion = "0.4";
+    invalid.receipt.toolVersion = "0.5";
     assert.throws(() => validateArchitectureSnapshot(invalid), /valid semantic version/);
   } finally {
     project.cleanup();

@@ -10,17 +10,19 @@ import {
 
 test("keeps versioned fact batches ordered, append-only and isolated", () => {
   const store = new FactStore();
-  const facts = ["z-fact"];
+  const facts = [{ value: "z-fact" }];
+  const source = { id: "z-provider", version: "1.0.0" };
 
   store.add("contracts", {
-    source: { id: "z-provider", version: "1.0.0" },
+    source,
     facts,
   });
   store.add("contracts", {
     source: { id: "a-provider", version: "1.0.0" },
-    facts: ["a-fact"],
+    facts: [{ value: "a-fact" }],
   });
-  facts.push("not-stored");
+  facts[0]!.value = "mutated-after-store";
+  source.id = "mutated-source";
 
   assert.deepEqual(
     store.batches<string>("contracts").map((batch) => batch.source),
@@ -29,11 +31,15 @@ test("keeps versioned fact batches ordered, append-only and isolated", () => {
       { id: "z-provider", version: "1.0.0" },
     ],
   );
-  assert.deepEqual(store.facts<string>("contracts"), ["a-fact", "z-fact"]);
+  assert.deepEqual(store.facts<{ value: string }>("contracts"), [{ value: "a-fact" }, { value: "z-fact" }]);
+  const stored = store.batches<{ value: string }>("contracts")[1]!;
+  assert.equal(Object.isFrozen(stored), true);
+  assert.equal(Object.isFrozen(stored.source), true);
+  assert.equal(Object.isFrozen(stored.facts[0]), true);
   assert.throws(
     () =>
       store.add("contracts", {
-        source: { id: "a-provider", version: "1.0.0" },
+        source: { id: "a-provider", version: "2.0.0" },
         facts: ["duplicate"],
       }),
     /already supplied/,

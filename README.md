@@ -2,7 +2,7 @@
 
 Pierwszy eksperymentalny slice toolingu do obserwowania ewolucji architektury TypeScript.
 
-## MVP 0.4
+## MVP 0.5
 
 Inspector nie wymaga adnotacji w analizowanym kodzie. Czyta istniejące `tsconfig.json`, wykorzystuje TypeScript Compiler API do rozwiązywania importów i emituje deterministyczny Architecture IR:
 
@@ -32,9 +32,10 @@ Snapshot ma trzy warstwy:
 
 Każdy fakt ma `provenance` z pochodzeniem (`observed`, `declared`, `inferred` albo
 `derived`) oraz opcjonalnym evidence. Receipt zawiera `snapshotId`, wersję
-narzędzia, hash konfiguracji, opcji kompilatora i wejścia.
+narzędzia, hash konfiguracji, opcji kompilatora, wejścia oraz manifest i hash
+użytego pipeline’u providerów/projectorów.
 
-## Architecture Diff 0.4
+## Architecture Diff 0.5
 
 Diff porównuje snapshot z aktualnym working tree albo z refem Git. To porównanie jest oparte o stabilne identyfikatory modułów, plików i krawędzi, więc zmiana numeru linii sama w sobie nie tworzy nowej zależności.
 
@@ -101,7 +102,7 @@ Konfiguracja projektu, snapshoty IR i deklaracje `RuleSpec` są walidowane
 runtime przez Zod. Analyzer waliduje również snapshot przed zwróceniem go do
 konsumenta, a receipt jest sprawdzany przy zapisie/odczycie. Błędy na tych
 granicach zawierają ścieżkę do niepoprawnego pola zamiast cichego rzutowania
-danych. Aktualny kontrakt IR 0.4 jest jawnie `exact`: receipt jest wymagany,
+danych. Aktualny kontrakt IR 0.5 jest jawnie `exact`: receipt jest wymagany,
 a nieznane pola oraz starsze wersje IR są odrzucane. Migracja z wcześniejszych
 wersji wymaga osobnego adaptera poza biblioteką.
 

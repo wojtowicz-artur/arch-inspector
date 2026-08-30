@@ -6,12 +6,15 @@ import {
   type ArchitectureModule,
   type FileOwnership,
   type ModuleEdge,
+  type PipelineComponent,
+  type PipelineManifest,
   type SourceFile,
   type SourceImport,
 } from "./ir.js";
 import { buildModuleEdges, findCycles } from "./graph.js";
 import { inferModules } from "./modules.js";
 import { relativeToRoot, type DiscoveredProject } from "./project.js";
+import { sha256 } from "./stable.js";
 import type { TypeAwareImportIndex } from "./type-aware.js";
 
 export interface FactBatch<TFact> {
@@ -42,9 +45,25 @@ export interface Projector<TInput, TOutput> {
   project(input: TInput): TOutput;
 }
 
+function freezeDeep<T>(value: T, seen = new WeakSet<object>()): T {
+  if (value === null || typeof value !== "object") return value;
+  if (seen.has(value)) return value;
+  if (value instanceof Map || value instanceof Set || value instanceof Date) {
+    throw new Error("Facts must use immutable records and arrays, not mutable collection objects.");
+  }
+  seen.add(value);
+  for (const nested of Object.values(value as Record<string, unknown>)) freezeDeep(nested, seen);
+  return Object.freeze(value);
+}
+
+function cloneAndFreeze<T>(value: T): T {
+  return freezeDeep(structuredClone(value));
+}
+
 /**
  * Internal normalized fact store. Batches are append-only and kept ordered by
  * provider identity so future providers cannot silently replace one another.
+ * Stored JSON-like facts are cloned and deeply frozen at the boundary.
  */
 export class FactStore {
   private readonly batchesByKind = new Map<string, FactBatch<unknown>[]>();
@@ -56,16 +75,16 @@ export class FactStore {
     }
 
     const current = this.batchesByKind.get(factKind) ?? [];
-    if (current.some((entry) => entry.source.id === batch.source.id && entry.source.version === batch.source.version)) {
+    if (current.some((entry) => entry.source.id === batch.source.id)) {
       throw new Error(
-        `Fact provider '${batch.source.id}@${batch.source.version}' already supplied '${factKind}' facts.`,
+        `Fact provider '${batch.source.id}' already supplied '${factKind}' facts; versions cannot be combined.`,
       );
     }
 
-    const stored: FactBatch<TFact> = {
-      source: { ...batch.source },
-      facts: Object.freeze([...batch.facts]),
-    };
+    const stored = Object.freeze({
+      source: Object.freeze({ ...batch.source }),
+      facts: Object.freeze(batch.facts.map(cloneAndFreeze)),
+    }) as FactBatch<TFact>;
     const next = [...current, stored].sort(
       (left, right) =>
         left.source.id.localeCompare(right.source.id) || left.source.version.localeCompare(right.source.version),
@@ -74,7 +93,15 @@ export class FactStore {
   }
 
   batches<TFact>(factKind: string): readonly FactBatch<TFact>[] {
-    return (this.batchesByKind.get(factKind) ?? []) as readonly FactBatch<TFact>[];
+    const batches = this.batchesByKind.get(factKind) ?? [];
+    return Object.freeze(
+      batches.map((batch) =>
+        Object.freeze({
+          source: Object.freeze({ ...batch.source }),
+          facts: batch.facts,
+        }),
+      ),
+    ) as readonly FactBatch<TFact>[];
   }
 
   facts<TFact>(factKind: string): readonly TFact[] {
@@ -133,8 +160,8 @@ function sourceFileFacts(project: DiscoveredProject): SourceFile[] {
 
 export interface ModuleInferenceFact {
   modules: readonly ArchitectureModule[];
-  fileToModule: ReadonlyMap<string, string>;
-  moduleEntrypoints: ReadonlyMap<string, ReadonlySet<string>>;
+  fileToModule: readonly (readonly [string, string])[];
+  moduleEntrypoints: readonly (readonly [string, readonly string[]])[];
 }
 
 const sourceFileProvider: FactProvider<SourceFile> = {
@@ -163,12 +190,12 @@ const moduleProvider: FactProvider<ModuleInferenceFact> = {
   factKind: "architecture.module-inference",
   collect: ({ project }) => {
     const inferred = inferModules(project);
-    const fileToModule = new Map(
-      [...inferred.fileToModule.entries()].map(([file, module]) => [relativeToRoot(project.root, file), module]),
-    );
-    const moduleEntrypoints = new Map(
-      inferred.modules.map((module) => [module.id, new Set(module.entrypoints)] as const),
-    );
+    const fileToModule = [...inferred.fileToModule.entries()]
+      .map(([file, module]) => [relativeToRoot(project.root, file), module] as const)
+      .sort(([left], [right]) => left.localeCompare(right));
+    const moduleEntrypoints = inferred.modules
+      .map((module) => [module.id, [...module.entrypoints]] as const)
+      .sort(([left], [right]) => left.localeCompare(right));
     return {
       source: { id: moduleProvider.id, version: moduleProvider.version },
       facts: [
@@ -182,12 +209,15 @@ const moduleProvider: FactProvider<ModuleInferenceFact> = {
   },
 };
 
-/** Collect the built-in source and architecture facts in a deterministic order. */
-export function collectBuiltInFacts(context: AnalysisContext): FactStore {
+export const BUILTIN_FACT_PROVIDERS = [moduleProvider, sourceFileProvider, importProvider] as const;
+
+/** Collect facts from an explicit provider composition in a deterministic store. */
+export function collectFacts(
+  context: AnalysisContext,
+  providers: readonly FactProvider<unknown>[] = BUILTIN_FACT_PROVIDERS,
+): FactStore {
   const store = new FactStore();
-  collectProvider(store, moduleProvider, context);
-  collectProvider(store, sourceFileProvider, context);
-  collectProvider(store, importProvider, context);
+  for (const provider of providers) collectProvider(store, provider, context);
   return store;
 }
 
@@ -240,3 +270,25 @@ export const ownershipProjector: Projector<OwnershipProjectionInput, FileOwnersh
       },
     })),
 };
+
+export const BUILTIN_PROJECTORS = [moduleGraphProjector, ownershipProjector] as const;
+
+function pipelineComponents(components: readonly { id: string; version: string }[]): PipelineComponent[] {
+  return components.map(({ id, version }) => ({ id, version }));
+}
+
+export const BUILTIN_PIPELINE: PipelineManifest = {
+  providers: pipelineComponents(BUILTIN_FACT_PROVIDERS),
+  projectors: pipelineComponents(BUILTIN_PROJECTORS),
+};
+
+export function clonePipelineManifest(manifest: PipelineManifest): PipelineManifest {
+  return {
+    providers: manifest.providers.map(({ id, version }) => ({ id, version })),
+    projectors: manifest.projectors.map(({ id, version }) => ({ id, version })),
+  };
+}
+
+export function hashPipeline(manifest: PipelineManifest): string {
+  return sha256(manifest);
+}

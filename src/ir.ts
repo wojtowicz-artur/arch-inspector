@@ -1,10 +1,11 @@
-export const IR_VERSION = "0.4" as const;
-export const TOOL_VERSION = "0.4.0" as const;
+export const IR_VERSION = "0.5" as const;
+export const TOOL_VERSION = "0.5.0" as const;
 export const IR_CONTRACT = {
   version: IR_VERSION,
   compatibility: "exact",
   unknownFields: "reject",
   receipt: "required",
+  pipeline: "required",
 } as const;
 
 export type Resolution = "internal" | "external" | "asset" | "unresolved" | "out-of-scope";
@@ -33,6 +34,16 @@ export interface Provenance {
   derivedFrom?: string[];
 }
 
+export interface PipelineComponent {
+  id: string;
+  version: string;
+}
+
+export interface PipelineManifest {
+  providers: PipelineComponent[];
+  projectors: PipelineComponent[];
+}
+
 export interface SnapshotReceipt {
   snapshotId: string;
   tool: "arch-inspector";
@@ -42,6 +53,8 @@ export interface SnapshotReceipt {
   configHash: string;
   compilerOptionsHash: string;
   inputHash: string;
+  pipeline: PipelineManifest;
+  pipelineHash: string;
 }
 
 export interface SnapshotPolicy {

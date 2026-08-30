@@ -151,6 +151,20 @@ const semverSchema = z
     "must be a valid semantic version",
   );
 
+const pipelineComponentSchema = z
+  .object({
+    id: z.string().min(1),
+    version: z.string().min(1),
+  })
+  .strict();
+
+const pipelineManifestSchema = z
+  .object({
+    providers: z.array(pipelineComponentSchema),
+    projectors: z.array(pipelineComponentSchema),
+  })
+  .strict();
+
 const snapshotReceiptSchema = z
   .object({
     snapshotId: z.string().regex(/^[a-f0-9]{64}$/),
@@ -160,6 +174,8 @@ const snapshotReceiptSchema = z
     configHash: z.string().regex(/^[a-f0-9]{64}$/),
     compilerOptionsHash: z.string().regex(/^[a-f0-9]{64}$/),
     inputHash: z.string().regex(/^[a-f0-9]{64}$/),
+    pipeline: pipelineManifestSchema,
+    pipelineHash: z.string().regex(/^[a-f0-9]{64}$/),
   })
   .strict();
 
