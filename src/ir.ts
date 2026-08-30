@@ -1,5 +1,6 @@
-export const IR_VERSION = "0.3" as const;
-export const TOOL_VERSION = "0.3.0" as const;
+export const LEGACY_IR_VERSION = "0.3" as const;
+export const IR_VERSION = "0.4" as const;
+export const TOOL_VERSION = "0.4.0" as const;
 export const IR_CONTRACT = {
   version: IR_VERSION,
   compatibility: "exact",
@@ -11,6 +12,7 @@ export type Resolution = "internal" | "external" | "asset" | "unresolved" | "out
 export type ResolutionConfidence = "exact" | "syntactic" | "ambiguous";
 export type ImportKind = "static" | "export" | "dynamic" | "require";
 export type ImportedSymbolKind = "type" | "value" | "both" | "unknown";
+export type ModuleEdgeVisibility = "public" | "deep" | "unknown" | "mixed";
 export type DiagnosticLevel = "error" | "warning" | "info";
 export type DiagnosticCategory = "violation" | "observation";
 export type FactOrigin = "observed" | "declared" | "inferred" | "derived";
@@ -44,6 +46,8 @@ export interface SnapshotReceipt {
 
 export interface SnapshotPolicy {
   failOn: string[];
+  /** Rule codes known to the analyzer, including rules with zero matches. */
+  knownRuleCodes?: string[];
   provenance: Provenance;
 }
 
@@ -67,6 +71,8 @@ export interface SourceImport {
   resolutionConfidence?: ResolutionConfidence;
   /** Whether the specifier matched a compilerOptions.paths project alias. */
   isProjectAlias?: boolean;
+  /** Whether the dependency looks like a project-owned package when resolution is incomplete. */
+  isProjectLike?: boolean;
   typeOnly: boolean;
   /** Optional TypeScript checker evidence for statically imported exports. */
   symbols?: Array<{
@@ -109,9 +115,10 @@ export interface ModuleEdge {
   imports: number;
   publicApiImports: number;
   deepImports: number;
+  unknownImports: number;
   files: string[];
   sourceEdgeIds: string[];
-  visibility: "public" | "deep" | "mixed";
+  visibility: ModuleEdgeVisibility;
   provenance: Provenance;
 }
 
@@ -142,6 +149,8 @@ export interface ArchitectureMetrics {
   moduleEdges: number;
   cycles: number;
   deepImports: number;
+  /** Cross-module imports whose public visibility could not be proven. */
+  unknownVisibilityImports: number;
   maxFanIn: { module: string; value: number } | null;
   maxFanOut: { module: string; value: number } | null;
   provenance: Provenance;

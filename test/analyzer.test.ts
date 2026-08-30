@@ -19,7 +19,7 @@ test("builds a deterministic architecture snapshot from a TypeScript project", (
     const second = analyzeProject(project.root);
 
     assert.equal(JSON.stringify(first), JSON.stringify(second));
-    assert.equal(first.irVersion, "0.3");
+    assert.equal(first.irVersion, "0.4");
     assert.deepEqual(
       first.architecture.modules.map((module) => module.id),
       ["admin", "booking", "calendar", "shared"],
@@ -296,6 +296,39 @@ test("keeps module identity stable when a later module introduces a name collisi
   }
 });
 
+test("does not reintroduce an existing cycle when a module name becomes namespaced", () => {
+  const project = createProject({
+    files: {
+      "src/modules/auth/index.ts": 'import { b } from "../b";\nexport const auth = b;\n',
+      "src/modules/b/index.ts": 'import { auth } from "../auth";\nexport const b = auth;\n',
+    },
+  });
+  try {
+    const before = analyzeProject(project.root);
+    fs.mkdirSync(path.join(project.root, "src/features/auth"), { recursive: true });
+    fs.writeFileSync(
+      path.join(project.root, "src/features/auth/index.ts"),
+      "export const featureAuth = true;\n",
+      "utf8",
+    );
+    const after = analyzeProject(project.root);
+    const diff = diffSnapshots(before, after);
+
+    assert.equal(diff.analysis.cycles.added.length, 0);
+    assert.equal(
+      diff.analysis.findings.added.some((finding) => finding.code === "architecture/cycle"),
+      false,
+    );
+    assert.equal(
+      diff.introducedViolations.some((finding) => finding.code === "architecture/cycle"),
+      false,
+    );
+    assert.equal(diff.hasRegressions, false);
+  } finally {
+    project.cleanup();
+  }
+});
+
 test("preserves type-only import and export semantics", () => {
   const project = createProject({
     files: {
@@ -328,6 +361,86 @@ test("distinguishes a resolved local file outside the configured analysis scope"
     assert.equal(edge?.toFile, "src/hidden.ts");
     assert.equal(snapshot.analysis.metrics.outOfScopeImports, 1);
     assert.ok(snapshot.analysis.findings.some((finding) => finding.code === "architecture/out-of-scope-import"));
+  } finally {
+    project.cleanup();
+  }
+});
+
+test("preserves unknown public visibility when a module has no known entrypoint", () => {
+  const project = createProject({
+    files: {
+      "src/modules/client/index.ts":
+        'import { internal } from "../library/internal";\nexport const value = internal;\n',
+      "src/modules/library/internal.ts": "export const internal = true;\n",
+    },
+  });
+  try {
+    const snapshot = analyzeProject(project.root);
+    const edge = snapshot.architecture.moduleEdges.find((candidate) => candidate.from === "client");
+    assert.equal(edge?.to, "library");
+    assert.equal(edge?.visibility, "unknown");
+    assert.equal(edge?.unknownImports, 1);
+    assert.equal(edge?.deepImports, 0);
+    assert.equal(snapshot.analysis.metrics.unknownVisibilityImports, 1);
+    assert.equal(snapshot.analysis.findings.filter((finding) => finding.code === "architecture/deep-import").length, 0);
+    assert.equal(
+      snapshot.analysis.findings.filter((finding) => finding.code === "architecture/no-public-entrypoint").length,
+      1,
+    );
+  } finally {
+    project.cleanup();
+  }
+});
+
+test("does not classify an unresolved workspace package as external", () => {
+  const project = createProject({
+    files: {
+      "src/app.ts": 'import { value } from "@workspace/library";\nexport const result = value;\n',
+    },
+  });
+  try {
+    fs.mkdirSync(path.join(project.root, "packages/library"), { recursive: true });
+    fs.writeFileSync(
+      path.join(project.root, "package.json"),
+      JSON.stringify({ name: "workspace-root", workspaces: ["packages/*"] }),
+      "utf8",
+    );
+    fs.writeFileSync(
+      path.join(project.root, "packages/library/package.json"),
+      JSON.stringify({ name: "@workspace/library" }),
+      "utf8",
+    );
+
+    const snapshot = analyzeProject(project.root);
+    const edge = snapshot.source.imports.find((candidate) => candidate.specifier === "@workspace/library");
+    assert.equal(edge?.resolution, "unresolved");
+    assert.equal(edge?.resolutionConfidence, "ambiguous");
+    assert.equal(edge?.isProjectLike, true);
+    assert.equal(snapshot.analysis.metrics.externalImports, 0);
+    assert.equal(
+      snapshot.analysis.findings.filter((finding) => finding.code === "architecture/unresolved-import").length,
+      1,
+    );
+  } finally {
+    project.cleanup();
+  }
+});
+
+test("keeps a resolved repo-local bare import out of the external category", () => {
+  const project = createProject({
+    compilerOptions: { baseUrl: "." },
+    files: {
+      "src/app.ts": 'import { value } from "packages/library/src";\nexport const result = value;\n',
+      "packages/library/src/index.ts": "export const value = true;\n",
+    },
+  });
+  try {
+    const snapshot = analyzeProject(project.root);
+    const edge = snapshot.source.imports.find((candidate) => candidate.specifier === "packages/library/src");
+    assert.equal(edge?.resolution, "out-of-scope");
+    assert.equal(edge?.toFile, "packages/library/src/index.ts");
+    assert.equal(snapshot.analysis.metrics.externalImports, 0);
+    assert.equal(snapshot.analysis.metrics.outOfScopeImports, 1);
   } finally {
     project.cleanup();
   }

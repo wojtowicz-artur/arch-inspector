@@ -13,11 +13,12 @@ export { createSarifLog, renderSarif } from "./sarif.js";
 export {
   ArchitectureIRValidationError,
   assertArchitectureSnapshot,
+  migrateArchitectureSnapshot,
   SnapshotReceiptError,
   validateArchitectureSnapshot,
   verifySnapshotReceipt,
 } from "./ir-contract.js";
-export { IR_CONTRACT, IR_VERSION, TOOL_VERSION } from "./ir.js";
+export { IR_CONTRACT, IR_VERSION, LEGACY_IR_VERSION, TOOL_VERSION } from "./ir.js";
 export { architectureSnapshotSchema } from "./ir-schema.js";
 export { boundaryZoneSchema, inspectorConfigSchema, moduleIdStrategySchema } from "./config-schema.js";
 export type { BoundaryZone } from "./config-schema.js";
@@ -50,6 +51,7 @@ export type {
   ImportKind,
   ImportedSymbolKind,
   ModuleEdge,
+  ModuleEdgeVisibility,
   Provenance,
   Resolution,
   ResolutionConfidence,

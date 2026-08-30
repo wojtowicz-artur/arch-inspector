@@ -2,7 +2,7 @@
 
 Pierwszy eksperymentalny slice toolingu do obserwowania ewolucji architektury TypeScript.
 
-## MVP 0.3
+## MVP 0.4
 
 Inspector nie wymaga adnotacji w analizowanym kodzie. Czyta istniejące `tsconfig.json`, wykorzystuje TypeScript Compiler API do rozwiązywania importów i emituje deterministyczny Architecture IR:
 
@@ -11,10 +11,14 @@ Inspector nie wymaga adnotacji w analizowanym kodzie. Czyta istniejące `tsconfi
 - importy static, export-from, dynamic `import()` i proste `require()`; także
   jawne obserwacje dynamicznych importów, których nie da się rozwiązać statycznie;
 - rozróżnienie importów internal/external/unresolved/out-of-scope oraz type-only;
+  zależności repo-lokalne pozostają projektowe także wtedy, gdy nie da się ich
+  rozwiązać, a zależności poza zakresem zachowują ścieżkę docelową;
 - opcjonalny tryb `typeAware`, który uruchamia TypeScript checker i dopisuje do
   statycznych krawędzi nazwy importowanych eksportów oraz ich rodzaj (`type`,
   `value`, `both`, `unknown`);
 - module graph, cykle, fan-in/fan-out;
+- jawna niepewność widoczności publicznego API; brak znanego entrypointu nie jest
+  automatycznie traktowany jako deep import;
 - wykrywanie deep imports względem `index.ts` modułu;
 - deterministyczny JSON z wersjonowanym `irVersion` i snapshot receipt; moduły mają
   także `stableId` wyprowadzony z korzenia, niezależny od kompaktowej nazwy `id`;
@@ -30,7 +34,7 @@ Każdy fakt ma `provenance` z pochodzeniem (`observed`, `declared`, `inferred` a
 `derived`) oraz opcjonalnym evidence. Receipt zawiera `snapshotId`, wersję
 narzędzia, hash konfiguracji, opcji kompilatora i wejścia.
 
-## Architecture Diff 0.3
+## Architecture Diff 0.4
 
 Diff porównuje snapshot z aktualnym working tree albo z refem Git. To porównanie jest oparte o stabilne identyfikatory modułów, plików i krawędzi, więc zmiana numeru linii sama w sobie nie tworzy nowej zależności.
 
@@ -96,15 +100,16 @@ Konfiguracja projektu, snapshoty IR i deklaracje `RuleSpec` są walidowane
 runtime przez Zod. Analyzer waliduje również snapshot przed zwróceniem go do
 konsumenta, a receipt jest sprawdzany przy zapisie/odczycie. Błędy na tych
 granicach zawierają ścieżkę do niepoprawnego pola zamiast cichego rzutowania
-danych. Przykładowy kontrakt IR 0.3 znajduje się w
-`test/fixtures/architecture-0.3.json`. Polityka IR 0.3 jest jawnie `exact`:
-receipt jest wymagany, a nieznane pola są odrzucane; kolejna wersja będzie
-wymagała osobnego adaptera/migracji.
+danych. Przykładowy legacy kontrakt IR 0.3 znajduje się w
+`test/fixtures/architecture-0.3.json`. Aktualny kontrakt IR 0.4 jest jawnie
+`exact`: receipt jest wymagany, a nieznane pola są odrzucane. `loadSnapshot`
+sprawdza receipt starego snapshotu i migruje IR 0.3 do 0.4; pozostałe wersje
+wymagają osobnego adaptera.
 
 `arch graph` emituje deterministyczny graf modułów w formacie Graphviz DOT. Węzły
 uczestniczące w cyklu są wyróżnione, a etykiety krawędzi pokazują liczbę
-importów i udział importów przez publiczne API. Flaga `--json` zachowuje pełny
-snapshot IR zamiast formatu DOT.
+importów, udział public API oraz importy o nieznanej widoczności. Flaga `--json`
+zachowuje pełny snapshot IR zamiast formatu DOT.
 
 Konfiguracja opcjonalna: `arch.config.json` w katalogu projektu:
 

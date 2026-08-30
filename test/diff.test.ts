@@ -23,6 +23,7 @@ test("diffs architecture snapshots by stable module, file, edge and diagnostic i
         imports: 1,
         publicApiImports: 1,
         deepImports: 0,
+        unknownImports: 0,
         files: ["src/modules/admin/index.ts"],
         sourceEdgeIds: [],
         visibility: "public",
@@ -92,6 +93,26 @@ test("keeps import identity stable when only the source location moves", () => {
   }
 });
 
+test("keeps import identity stable when resolver evidence changes", () => {
+  const project = createSampleProject();
+  try {
+    const base = analyzeProject(project.root);
+    const current = structuredClone(base);
+    const moved = current.source.imports.find((edge) => edge.resolution === "internal");
+    assert.ok(moved);
+    moved.resolution = "out-of-scope";
+    moved.toFile = "src/modules/calendar/hidden.ts";
+
+    const diff = diffSnapshots(base, current);
+
+    assert.equal(diff.source.imports.added.length, 0);
+    assert.equal(diff.source.imports.removed.length, 0);
+    assert.equal(diff.source.imports.changed.length, 1);
+  } finally {
+    project.cleanup();
+  }
+});
+
 test("keeps finding identity stable when only location and rendered text move", () => {
   const project = createSampleProject();
   try {
@@ -130,12 +151,12 @@ test("snapshot loader validates the hardened IR shape and provenance", () => {
     const malformed = JSON.parse(JSON.stringify(snapshot)) as { source: { provenance?: unknown } };
     delete malformed.source.provenance;
     fs.writeFileSync(snapshotPath, JSON.stringify(malformed), "utf8");
-    assert.throws(() => loadSnapshot(snapshotPath), /Architecture IR 0\.3 snapshot/);
+    assert.throws(() => loadSnapshot(snapshotPath), /Architecture IR 0\.4 snapshot/);
 
     const legacy = JSON.parse(JSON.stringify(snapshot)) as { irVersion: string };
     legacy.irVersion = "0.1";
     fs.writeFileSync(snapshotPath, JSON.stringify(legacy), "utf8");
-    assert.throws(() => loadSnapshot(snapshotPath), /Architecture IR 0\.3 snapshot/);
+    assert.throws(() => loadSnapshot(snapshotPath), /Architecture IR 0\.4 snapshot/);
 
     const incomparable = structuredClone(snapshot);
     incomparable.receipt.configHash = "different";

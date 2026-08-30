@@ -1,7 +1,7 @@
 import path from "node:path";
 import ts from "typescript";
 import type { ImportKind, SourceImport } from "./ir.js";
-import { relativeToRoot, type DiscoveredProject } from "./project.js";
+import { isWithin, relativeToRoot, type DiscoveredProject } from "./project.js";
 import { typeAwareImportKey, type TypeAwareImportIndex } from "./type-aware.js";
 
 interface RawImport {
@@ -9,6 +9,7 @@ interface RawImport {
   kind: ImportKind;
   typeOnly: boolean;
   position: number;
+  signature: string;
 }
 
 function sourceFileFor(file: string, text: string): ts.SourceFile {
@@ -34,8 +35,8 @@ function dynamicSpecifier(expression: ts.Expression): string {
 
 function collectImports(sourceFile: ts.SourceFile): RawImport[] {
   const imports: RawImport[] = [];
-  const add = (specifier: string, kind: ImportKind, position: number, typeOnly = false) => {
-    imports.push({ specifier, kind, position, typeOnly });
+  const add = (specifier: string, kind: ImportKind, position: number, signature: string, typeOnly = false) => {
+    imports.push({ specifier, kind, position, typeOnly, signature: signature.replace(/\s+/g, " ").trim() });
   };
 
   const visit = (node: ts.Node): void => {
@@ -51,6 +52,7 @@ function collectImports(sourceFile: ts.SourceFile): RawImport[] {
         node.moduleSpecifier.text,
         "static",
         node.getStart(sourceFile),
+        node.getText(sourceFile),
         clause?.isTypeOnly === true || allNamedBindingsTypeOnly === true,
       );
     } else if (ts.isExportDeclaration(node) && node.moduleSpecifier && ts.isStringLiteral(node.moduleSpecifier)) {
@@ -64,13 +66,14 @@ function collectImports(sourceFile: ts.SourceFile): RawImport[] {
         node.moduleSpecifier.text,
         "export",
         node.getStart(sourceFile),
+        node.getText(sourceFile),
         node.isTypeOnly === true || allNamedExportsTypeOnly === true,
       );
     } else if (ts.isCallExpression(node) && node.arguments.length === 1) {
       if (node.expression.kind === ts.SyntaxKind.ImportKeyword) {
-        add(dynamicSpecifier(node.arguments[0]), "dynamic", node.getStart(sourceFile));
+        add(dynamicSpecifier(node.arguments[0]), "dynamic", node.getStart(sourceFile), node.getText(sourceFile));
       } else if (ts.isIdentifier(node.expression) && node.expression.text === "require") {
-        add(dynamicSpecifier(node.arguments[0]), "require", node.getStart(sourceFile));
+        add(dynamicSpecifier(node.arguments[0]), "require", node.getStart(sourceFile), node.getText(sourceFile));
       }
     }
     ts.forEachChild(node, visit);
@@ -88,6 +91,13 @@ function isBuiltin(specifier: string): boolean {
 
 function isLocalLike(specifier: string): boolean {
   return specifier.startsWith(".") || specifier.startsWith("/") || specifier.startsWith("#");
+}
+
+function packageNameForSpecifier(specifier: string): string | undefined {
+  if (isLocalLike(specifier) || specifier.startsWith("node:")) return undefined;
+  const segments = specifier.split("/");
+  if (segments[0]?.startsWith("@")) return segments.length >= 2 ? `${segments[0]}/${segments[1]}` : undefined;
+  return segments[0];
 }
 
 function matchesPathPattern(specifier: string, pattern: string): boolean {
@@ -156,31 +166,35 @@ export function collectEdges(
       const internal = resolvedFile !== undefined && projectFiles.has(resolvedFile);
       const compilerOptions = project.compilerOptionsByFile.get(file) ?? project.compilerOptions;
       const projectAlias = isProjectAlias(current.specifier, compilerOptions);
+      const packageName = packageNameForSpecifier(current.specifier);
+      const projectLike =
+        isLocalLike(current.specifier) ||
+        projectAlias ||
+        (packageName !== undefined && project.projectPackageNames.has(packageName));
+      const declaredExternal = packageName !== undefined && project.externalPackageNames.has(packageName);
       const asset =
         isAssetSpecifier(current.specifier) || (resolvedFile !== undefined && isAssetSpecifier(resolvedFile));
       const outOfScope =
         resolvedFile !== undefined &&
         !internal &&
-        (isLocalLike(current.specifier) || projectAlias) &&
+        isWithin(project.root, resolvedFile) &&
         !isNodeModulesPath(resolvedFile);
+      const unresolvedLike = current.kind === "dynamic" || current.kind === "require" || projectLike;
       const resolution = internal
         ? "internal"
         : asset
           ? "asset"
           : outOfScope
             ? "out-of-scope"
-            : resolvedFile || isBuiltin(current.specifier)
+            : resolvedFile || isBuiltin(current.specifier) || declaredExternal
               ? "external"
-              : current.kind === "dynamic" ||
-                  current.kind === "require" ||
-                  isLocalLike(current.specifier) ||
-                  projectAlias
+              : unresolvedLike
                 ? "unresolved"
                 : "external";
       const resolutionConfidence =
         resolvedFile !== undefined || isBuiltin(current.specifier)
           ? "exact"
-          : current.kind === "dynamic" || current.kind === "require" || isLocalLike(current.specifier) || projectAlias
+          : unresolvedLike
             ? "ambiguous"
             : "syntactic";
       const location = sourceFile.getLineAndCharacterOfPosition(current.position);
@@ -188,10 +202,10 @@ export function collectEdges(
       const toFile = internal || outOfScope ? relativeToRoot(project.root, resolvedFile!) : undefined;
       const occurrenceKey = [
         fromFile,
-        toFile ?? "",
         current.kind,
         current.specifier,
         current.typeOnly ? "type" : "value",
+        current.signature,
       ].join("\0");
       const occurrence = occurrences.get(occurrenceKey) ?? 0;
       occurrences.set(occurrenceKey, occurrence + 1);
@@ -205,6 +219,7 @@ export function collectEdges(
         resolution,
         resolutionConfidence,
         ...(projectAlias ? { isProjectAlias: true } : {}),
+        ...(projectLike ? { isProjectLike: true } : {}),
         typeOnly: current.typeOnly,
         ...(semantic ? { symbols: semantic.symbols } : {}),
         location: { line: location.line + 1, column: location.character + 1 },

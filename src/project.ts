@@ -22,6 +22,10 @@ export interface DiscoveredProject {
   files: string[];
   /** Source text cache shared by extraction, metrics and receipt hashing. */
   fileContents: ReadonlyMap<string, string>;
+  /** Package manifests used to distinguish project-owned and external names. */
+  packageJsonContents: ReadonlyMap<string, string>;
+  projectPackageNames: ReadonlySet<string>;
+  externalPackageNames: ReadonlySet<string>;
   /** Module resolution cache populated lazily by the import extractor. */
   resolutionCache: Map<string, ts.ResolvedModule | undefined>;
   config: InspectorConfig;
@@ -102,6 +106,77 @@ const DEFAULT_EXCLUDES = [
   ".turbo/**",
   ".cache/**",
 ];
+
+const PACKAGE_DISCOVERY_EXCLUDES = new Set([
+  ".git",
+  "node_modules",
+  ".next",
+  "dist",
+  "build",
+  "coverage",
+  ".turbo",
+  ".cache",
+]);
+
+interface PackageFacts {
+  contents: ReadonlyMap<string, string>;
+  projectPackageNames: ReadonlySet<string>;
+  externalPackageNames: ReadonlySet<string>;
+}
+
+function packageJsonPaths(root: string): string[] {
+  const discovered: string[] = [];
+  const visit = (directory: string): void => {
+    let entries: fs.Dirent[];
+    try {
+      entries = fs.readdirSync(directory, { withFileTypes: true });
+    } catch {
+      return;
+    }
+    for (const entry of entries) {
+      if (entry.name === "package.json") {
+        discovered.push(path.join(directory, entry.name));
+        continue;
+      }
+      if (entry.isDirectory() && !PACKAGE_DISCOVERY_EXCLUDES.has(entry.name)) {
+        visit(path.join(directory, entry.name));
+      }
+    }
+  };
+  visit(root);
+  return [...new Set(discovered.map(normalize))].sort();
+}
+
+function dependencyNames(value: unknown): string[] {
+  return value && typeof value === "object" && !Array.isArray(value) ? Object.keys(value) : [];
+}
+
+function readPackageFacts(root: string): PackageFacts {
+  const contents = new Map<string, string>();
+  const projectPackageNames = new Set<string>();
+  const externalPackageNames = new Set<string>();
+  for (const file of packageJsonPaths(root)) {
+    const text = ts.sys.readFile(file) ?? "";
+    contents.set(file, text);
+    if (!text) continue;
+    let parsed: unknown;
+    try {
+      parsed = JSON.parse(text) as unknown;
+    } catch {
+      // TypeScript can still resolve a project without a valid package
+      // manifest. Keep the manifest in the receipt but preserve uncertainty.
+      continue;
+    }
+    if (!parsed || typeof parsed !== "object" || Array.isArray(parsed)) continue;
+    const record = parsed as Record<string, unknown>;
+    if (typeof record.name === "string" && record.name.length > 0) projectPackageNames.add(record.name);
+    for (const field of ["dependencies", "devDependencies", "peerDependencies", "optionalDependencies"]) {
+      for (const name of dependencyNames(record[field])) externalPackageNames.add(name);
+    }
+  }
+  for (const name of projectPackageNames) externalPackageNames.delete(name);
+  return { contents, projectPackageNames, externalPackageNames };
+}
 
 function globToRegExp(pattern: string): RegExp {
   const normalized = pattern.replaceAll("\\", "/").replace(/^\.\//, "");
@@ -222,6 +297,7 @@ export function discoverProject(inputPath = "."): DiscoveredProject {
     if (owned.length > 0) filteredFilesByConfig.set(configPath, owned);
   }
   const fileContents = new Map(files.map((file) => [file, ts.sys.readFile(file) ?? ""]));
+  const packageFacts = readPackageFacts(root);
   const sourceRoot = sourceRootFor(root, files, compilerOptions);
 
   return {
@@ -235,6 +311,9 @@ export function discoverProject(inputPath = "."): DiscoveredProject {
     filesByConfig: filteredFilesByConfig,
     files,
     fileContents,
+    packageJsonContents: packageFacts.contents,
+    projectPackageNames: packageFacts.projectPackageNames,
+    externalPackageNames: packageFacts.externalPackageNames,
     resolutionCache: new Map(),
     config,
   };

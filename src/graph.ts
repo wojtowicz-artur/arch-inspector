@@ -13,33 +13,37 @@ export function buildModuleEdges(
     const to = fileToModule.get(edge.toFile);
     if (!from || !to || from === to) continue;
     const key = `${from}\0${to}`;
-    const current = grouped.get(key) ?? {
+    const current: ModuleEdge = grouped.get(key) ?? {
       id: key,
       from,
       to,
       imports: 0,
       publicApiImports: 0,
       deepImports: 0,
+      unknownImports: 0,
       files: [],
       sourceEdgeIds: [],
-      visibility: "deep" as const,
+      visibility: "unknown" as const,
       provenance: {
         origin: "derived" as const,
         analyzer: "module-projection",
       },
     };
-    const publicApi = moduleEntrypoints.get(to)?.has(edge.toFile) === true;
+    const entrypoints = moduleEntrypoints.get(to);
+    const publicApiKnown = (entrypoints?.size ?? 0) > 0;
+    const publicApi = entrypoints?.has(edge.toFile) === true;
     current.imports += 1;
-    if (publicApi) current.publicApiImports += 1;
+    if (!publicApiKnown) current.unknownImports += 1;
+    else if (publicApi) current.publicApiImports += 1;
     else current.deepImports += 1;
     if (!current.files.includes(edge.fromFile)) current.files.push(edge.fromFile);
     if (!current.sourceEdgeIds.includes(edge.id)) current.sourceEdgeIds.push(edge.id);
-    current.visibility =
-      current.publicApiImports > 0 && current.deepImports > 0
-        ? "mixed"
-        : current.publicApiImports > 0
-          ? "public"
-          : "deep";
+    const visibilityKinds = [
+      current.publicApiImports > 0 ? "public" : undefined,
+      current.deepImports > 0 ? "deep" : undefined,
+      current.unknownImports > 0 ? "unknown" : undefined,
+    ].filter((value): value is "public" | "deep" | "unknown" => value !== undefined);
+    current.visibility = visibilityKinds.length === 1 ? visibilityKinds[0] : "mixed";
     grouped.set(key, current);
   }
   return [...grouped.values()]
@@ -154,10 +158,18 @@ export function renderModuleGraphDot(snapshot: Pick<ArchitectureSnapshot, "archi
   }
 
   for (const edge of [...moduleEdges].sort((a, b) => compare(a.id, b.id))) {
-    const publicApi =
-      edge.publicApiImports === edge.imports ? "public API" : `${edge.publicApiImports}/${edge.imports} public API`;
+    const visibility =
+      edge.publicApiImports === edge.imports
+        ? "public API"
+        : [
+            edge.publicApiImports > 0 ? `${edge.publicApiImports} public API` : undefined,
+            edge.deepImports > 0 ? `${edge.deepImports} deep` : undefined,
+            edge.unknownImports > 0 ? `${edge.unknownImports} unknown` : undefined,
+          ]
+            .filter((value): value is string => value !== undefined)
+            .join(", ");
     lines.push(
-      `  ${dotString(edge.from)} -> ${dotString(edge.to)} [label=${dotString(`${edge.imports} (${publicApi})`)}];`,
+      `  ${dotString(edge.from)} -> ${dotString(edge.to)} [label=${dotString(`${edge.imports} (${visibility})`)}];`,
     );
   }
 

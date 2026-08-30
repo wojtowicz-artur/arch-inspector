@@ -1,3 +1,4 @@
+import path from "node:path";
 import { collectEdges, type ModuleResolutionCache, type SourceAstCache } from "./imports.js";
 import {
   IR_VERSION,
@@ -10,9 +11,9 @@ import {
 import { assertArchitectureSnapshot } from "./ir-contract.js";
 import { buildModuleEdges, findCycles } from "./graph.js";
 import { inferModules } from "./modules.js";
-import { discoverProject, relativeToRoot, type DiscoveredProject } from "./project.js";
-import { evaluateRules } from "./rules.js";
-import { canonicalStringify, sha256 } from "./stable.js";
+import { discoverProject, isWithin, relativeToRoot, type DiscoveredProject } from "./project.js";
+import { BUILTIN_RULES, evaluateRules } from "./rules.js";
+import { sha256 } from "./stable.js";
 import { buildTypeAwareImportIndex, type TypeAwareImportIndex } from "./type-aware.js";
 
 function languageFor(file: string): "typescript" | "javascript" {
@@ -55,6 +56,7 @@ function metrics(
     moduleEdges: moduleEdges.length,
     cycles: cycles.length,
     deepImports: moduleEdges.reduce((total, edge) => total + edge.deepImports, 0),
+    unknownVisibilityImports: moduleEdges.reduce((total, edge) => total + edge.unknownImports, 0),
     maxFanIn: highest(fanIn),
     maxFanOut: highest(fanOut),
     provenance: { origin: "derived", analyzer: "architecture-metrics" },
@@ -80,12 +82,46 @@ function sourceFiles(project: DiscoveredProject): SourceFile[] {
 }
 
 function inputHash(project: DiscoveredProject): string {
-  return sha256(
-    project.files.map((file) => ({
+  return sha256({
+    files: project.files.map((file) => ({
       path: relativeToRoot(project.root, file),
       content: project.fileContents.get(file) ?? "",
     })),
-  );
+    packageJson: [...project.packageJsonContents.entries()]
+      .map(([file, content]) => ({ path: relativeToRoot(project.root, file), content }))
+      .sort((left, right) => left.path.localeCompare(right.path)),
+  });
+}
+
+/**
+ * TypeScript resolves several compiler options to absolute paths (rootDir,
+ * outDir, baseUrl, pathsBasePath, configFilePath, typeRoots, ...). Those
+ * paths differ when the same Git tree is unpacked into a temporary directory,
+ * even though the compiler context is semantically identical. Normalize only
+ * paths inside the project root so external toolchain paths retain their
+ * meaning.
+ */
+function normalizeCompilerOptions(value: unknown, projectRoot: string): unknown {
+  if (Array.isArray(value)) return value.map((entry) => normalizeCompilerOptions(entry, projectRoot));
+  if (typeof value === "string" && path.isAbsolute(value)) {
+    const normalized = path.normalize(value);
+    return isWithin(projectRoot, normalized) ? relativeToRoot(projectRoot, normalized) : value;
+  }
+  if (value && typeof value === "object") {
+    return Object.fromEntries(
+      Object.entries(value).map(([key, entry]) => [key, normalizeCompilerOptions(entry, projectRoot)]),
+    );
+  }
+  return value;
+}
+
+function normalizedCompilerContexts(project: DiscoveredProject): unknown {
+  return [...project.compilerOptionsByConfig.entries()]
+    .map(([configPath, options]) => ({
+      config: relativeToRoot(project.root, configPath),
+      options: normalizeCompilerOptions(options, project.root),
+    }))
+    .sort((left, right) => left.config.localeCompare(right.config));
 }
 
 function createReceipt(
@@ -98,8 +134,8 @@ function createReceipt(
     irVersion: IR_VERSION,
     configHash: sha256(project.config),
     compilerOptionsHash: sha256({
-      default: project.compilerOptions,
-      configurations: [...new Set([...project.compilerOptionsByConfig.values()].map(canonicalStringify))].sort(),
+      default: normalizeCompilerOptions(project.compilerOptions, project.root),
+      configurations: normalizedCompilerContexts(project),
     }),
     inputHash: inputHash(project),
   };
@@ -134,6 +170,11 @@ function projectSignature(project: DiscoveredProject): string {
           [relativeToRoot(project.root, configPath), files.map((file) => relativeToRoot(project.root, file))] as const,
       )
       .sort(([left], [right]) => left.localeCompare(right)),
+    packageJson: [...project.packageJsonContents.entries()]
+      .map(([file, content]) => [relativeToRoot(project.root, file), content] as const)
+      .sort(([left], [right]) => left.localeCompare(right)),
+    projectPackageNames: [...project.projectPackageNames].sort(),
+    externalPackageNames: [...project.externalPackageNames].sort(),
   });
 }
 
@@ -154,6 +195,7 @@ function analyzeDiscoveredProject(
   const findings: ArchitectureFinding[] = evaluateRules({
     config: project.config,
     modules: inferred.modules,
+    moduleEdges,
     imports,
     fileToModule: relativeFileToModule,
     moduleEntrypoints,
@@ -176,6 +218,13 @@ function analyzeDiscoveredProject(
   };
   const policy = {
     failOn: [...(project.config.failOn ?? [])].sort(),
+    knownRuleCodes: [
+      ...new Set([
+        ...BUILTIN_RULES.map((rule) => rule.code),
+        ...(project.config.rules ?? []).map((rule) => rule.code),
+        ...(project.config.rulePacks ?? []).flatMap((pack) => pack.rules.map((rule) => rule.code)),
+      ]),
+    ].sort(),
     provenance: {
       origin: "declared" as const,
       analyzer: "arch.config.json",

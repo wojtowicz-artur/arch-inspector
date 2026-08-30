@@ -54,6 +54,62 @@ test("rejects unknown command-line failOn selectors", () => {
   }
 });
 
+test("accepts a configured custom failOn selector with no matching findings", () => {
+  const project = createProject({
+    archConfig: {
+      rules: [
+        {
+          code: "project/never",
+          source: "imports",
+          where: [{ field: "isInternal", operator: "eq", value: true }],
+          finding: { category: "violation", level: "error", message: "never" },
+        },
+      ],
+    },
+    files: { "src/app.ts": "export const app = true;\n" },
+  });
+  try {
+    const result = spawnSync(process.execPath, [cliPath, "check", project.root, "--fail-on", "project/never"], {
+      encoding: "utf8",
+    });
+    assert.equal(result.status, 0, result.stderr);
+  } finally {
+    project.cleanup();
+  }
+});
+
+test("compares a working tree with a real Git ref extracted to a temporary path", () => {
+  const project = createProject({
+    compilerOptions: { rootDir: ".", outDir: "dist" },
+    files: {
+      "src/modules/a/index.ts": "export const a = true;\n",
+      "src/modules/b/index.ts": "export const b = true;\n",
+    },
+  });
+  const git = (...args: string[]): void => {
+    execFileSync("git", args, { cwd: project.root, stdio: "ignore" });
+  };
+  try {
+    git("init", "-q");
+    git("config", "user.email", "arch-inspector@example.test");
+    git("config", "user.name", "Arch Inspector Test");
+    git("add", ".");
+    git("commit", "-qm", "initial");
+
+    const result = spawnSync(process.execPath, [cliPath, "diff", "HEAD", project.root, "--json"], {
+      encoding: "utf8",
+    });
+    assert.equal(result.status, 0, result.stderr);
+    const payload = JSON.parse(result.stdout) as {
+      comparability: { status: string; reasons: string[] };
+    };
+    assert.equal(payload.comparability.status, "comparable");
+    assert.deepEqual(payload.comparability.reasons, []);
+  } finally {
+    project.cleanup();
+  }
+});
+
 test("audit gates only architecture violations introduced after a saved snapshot", () => {
   const project = createProject({
     files: {

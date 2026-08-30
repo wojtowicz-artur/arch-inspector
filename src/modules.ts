@@ -211,9 +211,9 @@ export function inferModules(project: DiscoveredProject): {
     )?.sort();
     return {
       id,
-      // `id` is intentionally kept as the human-facing/policy name for IR
-      // 0.3 compatibility. `stableId` is derived only from the physical root
-      // and therefore cannot change when another module reuses the same name.
+      // `id` remains the human-facing/policy name. `stableId` is derived only
+      // from the physical root and therefore cannot change when another module
+      // reuses the same name.
       stableId: relativeToRoot(project.root, root),
       root: relativeToRoot(project.root, root),
       files: files.map((file) => relativeToRoot(project.root, file)).sort(),

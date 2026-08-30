@@ -126,6 +126,7 @@ function renderText(snapshot: ArchitectureSnapshot): string {
     `Module edges: ${metrics.moduleEdges}`,
     `Cycles: ${metrics.cycles}`,
     `Deep imports: ${metrics.deepImports}`,
+    `Unknown visibility imports: ${metrics.unknownVisibilityImports ?? 0}`,
     `Max fan-in: ${metrics.maxFanIn ? `${metrics.maxFanIn.module} (${metrics.maxFanIn.value})` : "-"}`,
     `Max fan-out: ${metrics.maxFanOut ? `${metrics.maxFanOut.module} (${metrics.maxFanOut.value})` : "-"}`,
     `Policy: ${snapshot.policy.failOn.length > 0 ? snapshot.policy.failOn.join(", ") : "report-only"}`,
@@ -227,7 +228,9 @@ function diffProject(parsed: ParsedArgs): { diff: ArchitectureDiff; current: Arc
 
 function effectivePolicy(snapshot: ArchitectureSnapshot, parsed: ParsedArgs): string[] {
   if (parsed.failOn) {
-    const customCodes = new Set(snapshot.analysis.findings.map((finding) => finding.code));
+    const customCodes = new Set(
+      snapshot.policy.knownRuleCodes ?? snapshot.analysis.findings.map((finding) => finding.code),
+    );
     const unknown = parsed.failOn.filter((selector) => !isKnownFailOnSelector(selector, customCodes));
     if (unknown.length > 0) throw new Error(`Unknown failOn selector(s): ${unknown.join(", ")}.`);
     return parsed.failOn;

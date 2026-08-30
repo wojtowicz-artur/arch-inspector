@@ -5,6 +5,7 @@ import type {
   DiagnosticCategory,
   DiagnosticLevel,
   EvidenceRef,
+  ModuleEdge,
   SourceImport,
 } from "./ir.js";
 import type { BoundaryZone, InspectorConfig } from "./project.js";
@@ -35,6 +36,8 @@ export interface RuleContext {
 export interface RuleInput {
   config: InspectorConfig;
   modules: ArchitectureModule[];
+  /** Module edges used to anchor cycle findings to stable source-edge IDs. */
+  moduleEdges?: ModuleEdge[];
   imports: SourceImport[];
   fileToModule: Map<string, string>;
   moduleEntrypoints: Map<string, Set<string>>;
@@ -168,7 +171,7 @@ export const BUILTIN_RULES: readonly RuleSpec[] = [
     where: [
       { field: "isInternal", operator: "eq", value: true },
       { field: "isCrossModule", operator: "eq", value: true },
-      { field: "isPublicApi", operator: "eq", value: false },
+      { field: "publicApiStatus", operator: "eq", value: "deep" },
     ],
     finding: {
       category: "violation",
@@ -202,7 +205,7 @@ export const BUILTIN_RULES: readonly RuleSpec[] = [
     finding: {
       category: "observation",
       level: "info",
-      message: "Module '${moduleId}' has no index entrypoint; cross-module imports cannot be checked as public API.",
+      message: "Module '${moduleId}' has no known public entrypoint; cross-module visibility is unknown.",
       related: field("related"),
     },
   },
@@ -210,7 +213,7 @@ export const BUILTIN_RULES: readonly RuleSpec[] = [
 
 export const BUILTIN_RULE_PACK: RulePack = {
   id: "arch-inspector/core",
-  version: "0.3.0",
+  version: "0.4.0",
   requiredFacts: ["cycles", "imports", "forbiddenDependencies", "modules"],
   rules: [...BUILTIN_RULES],
 };
@@ -338,12 +341,67 @@ function boundaryViolation(
   return undefined;
 }
 
-function cycleRecords(cycles: ArchitectureCycle[]): RuleRecord[] {
-  return cycles.map((cycle) => ({
-    data: { id: cycle.id, modules: cycle.modules, edgeIds: cycle.edgeIds },
-    derivedFrom: cycle.edgeIds,
-    evidence: cycle.edgeIds.map((id) => ({ kind: "module-edge" as const, id })),
-  }));
+function cycleIdentity(
+  cycle: ArchitectureCycle,
+  modules: readonly ArchitectureModule[],
+  moduleEdges: readonly ModuleEdge[],
+): { derivedFrom: string[]; evidence: EvidenceRef[] } {
+  const modulesById = new Map(modules.map((module) => [module.id, module]));
+  const moduleEdgesById = new Map(moduleEdges.map((edge) => [edge.id, edge]));
+  const sourceEdgeIds = [
+    ...new Set(
+      cycle.edgeIds.flatMap((edgeId) => {
+        const edge = moduleEdgesById.get(edgeId);
+        return edge?.sourceEdgeIds.length ? edge.sourceEdgeIds : (edge?.provenance.derivedFrom ?? []);
+      }),
+    ),
+  ].sort(compare);
+  if (sourceEdgeIds.length > 0) {
+    return {
+      derivedFrom: sourceEdgeIds,
+      evidence: sourceEdgeIds.map((id) => ({ kind: "source-edge" as const, id })),
+    };
+  }
+
+  const stableModuleEdges = cycle.edgeIds
+    .map((edgeId) => moduleEdgesById.get(edgeId))
+    .filter((edge): edge is ModuleEdge => edge !== undefined)
+    .map((edge) => {
+      const from = modulesById.get(edge.from);
+      const to = modulesById.get(edge.to);
+      return `${from?.stableId ?? from?.root ?? edge.from}\0${to?.stableId ?? to?.root ?? edge.to}`;
+    })
+    .sort(compare);
+  if (stableModuleEdges.length > 0) {
+    const derivedFrom = stableModuleEdges.map((id) => `module-edge:${id}`);
+    return {
+      derivedFrom,
+      evidence: stableModuleEdges.map((id) => ({ kind: "module-edge" as const, id })),
+    };
+  }
+
+  const stableModules = cycle.modules
+    .map((id) => {
+      const module = modulesById.get(id);
+      return module?.stableId ?? module?.root ?? id;
+    })
+    .sort(compare);
+  const id = `cycle:${stableModules.join("\0")}`;
+  return { derivedFrom: [id], evidence: [{ kind: "module-edge" as const, id }] };
+}
+
+function cycleRecords(
+  cycles: ArchitectureCycle[],
+  modules: readonly ArchitectureModule[],
+  moduleEdges: readonly ModuleEdge[] = [],
+): RuleRecord[] {
+  return cycles.map((cycle) => {
+    const identity = cycleIdentity(cycle, modules, moduleEdges);
+    return {
+      data: { id: cycle.id, modules: cycle.modules, edgeIds: cycle.edgeIds },
+      ...identity,
+    };
+  });
 }
 
 function importRecords(input: RuleInput): RuleRecord[] {
@@ -353,7 +411,14 @@ function importRecords(input: RuleInput): RuleRecord[] {
     const toModule = edge.toFile ? input.fileToModule.get(edge.toFile) : undefined;
     const isInternal = edge.resolution === "internal";
     const isCrossModule = Boolean(fromModule && toModule && fromModule !== toModule);
-    const isPublicApi = toModule ? input.moduleEntrypoints.get(toModule)?.has(edge.toFile ?? "") === true : false;
+    const entrypoints = toModule ? input.moduleEntrypoints.get(toModule) : undefined;
+    const publicApiStatus =
+      !toModule || !entrypoints || entrypoints.size === 0
+        ? "unknown"
+        : entrypoints.has(edge.toFile ?? "")
+          ? "public"
+          : "deep";
+    const isPublicApi = publicApiStatus === "public";
     const boundary = boundaryViolation(
       modulesById.get(fromModule ?? ""),
       modulesById.get(toModule ?? ""),
@@ -376,14 +441,17 @@ function importRecords(input: RuleInput): RuleRecord[] {
         typeOnly: edge.typeOnly,
         symbols: edge.symbols?.map((symbol) => symbol.name),
         symbolKinds: edge.symbols?.map((symbol) => symbol.kind),
+        isProjectLike: edge.isProjectLike === true,
         fromModule,
         toModule,
         target: edge.toFile ?? edge.specifier,
         isInternal,
         isCrossModule,
         isPublicApi,
+        publicApiStatus,
         isUnresolvedInternal:
-          edge.resolution === "unresolved" && (isRelativeLike(edge.specifier) || edge.isProjectAlias === true),
+          edge.resolution === "unresolved" &&
+          (edge.isProjectLike === true || isRelativeLike(edge.specifier) || edge.isProjectAlias === true),
         isOutOfScope: edge.resolution === "out-of-scope",
         isDynamic: edge.importKind === "dynamic" || edge.importKind === "require",
         isBoundaryViolation: boundary !== undefined,
@@ -441,7 +509,7 @@ export function createRuleContext(input: RuleInput): RuleContext {
       forbiddenDependencies: (input.config.forbiddenDependencies?.length ?? 0) > 0,
     },
     collections: {
-      cycles: cycleRecords(input.cycles),
+      cycles: cycleRecords(input.cycles, input.modules, input.moduleEdges),
       imports,
       forbiddenDependencies: forbiddenDependencyRecords(input, imports),
       modules: moduleRecords(input.modules),

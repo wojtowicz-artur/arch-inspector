@@ -1,5 +1,5 @@
 import { z } from "zod";
-import { IR_CONTRACT, TOOL_VERSION, type ArchitectureSnapshot } from "./ir.js";
+import { IR_CONTRACT, LEGACY_IR_VERSION, TOOL_VERSION, type ArchitectureSnapshot } from "./ir.js";
 
 const factOriginSchema = z.enum(["observed", "declared", "inferred", "derived"]);
 const evidenceKindSchema = z.enum(["file", "source-edge", "module", "module-edge", "config", "rule"]);
@@ -42,6 +42,7 @@ const sourceImportSchema = z
     resolution: z.enum(["internal", "external", "asset", "unresolved", "out-of-scope"]),
     resolutionConfidence: z.enum(["exact", "syntactic", "ambiguous"]).optional(),
     isProjectAlias: z.boolean().optional(),
+    isProjectLike: z.boolean().optional(),
     typeOnly: z.boolean(),
     symbols: z
       .array(
@@ -90,9 +91,10 @@ const moduleEdgeSchema = z
     imports: z.number().int().nonnegative(),
     publicApiImports: z.number().int().nonnegative(),
     deepImports: z.number().int().nonnegative(),
+    unknownImports: z.number().int().nonnegative(),
     files: z.array(z.string()),
     sourceEdgeIds: z.array(z.string()),
-    visibility: z.enum(["public", "deep", "mixed"]),
+    visibility: z.enum(["public", "deep", "unknown", "mixed"]),
     provenance: provenanceSchema,
   })
   .strict();
@@ -119,6 +121,7 @@ const architectureMetricsSchema = z
     moduleEdges: z.number().int().nonnegative(),
     cycles: z.number().int().nonnegative(),
     deepImports: z.number().int().nonnegative(),
+    unknownVisibilityImports: z.number().int().nonnegative(),
     maxFanIn: z.object({ module: z.string(), value: z.number().int().nonnegative() }).strict().nullable(),
     maxFanOut: z.object({ module: z.string(), value: z.number().int().nonnegative() }).strict().nullable(),
     provenance: provenanceSchema,
@@ -165,6 +168,7 @@ const architectureSnapshotSchema: z.ZodType<ArchitectureSnapshot> = z
     policy: z
       .object({
         failOn: z.array(z.string()),
+        knownRuleCodes: z.array(z.string()).optional(),
         provenance: provenanceSchema,
       })
       .strict(),
@@ -194,4 +198,66 @@ const architectureSnapshotSchema: z.ZodType<ArchitectureSnapshot> = z
   })
   .strict();
 
-export { architectureSnapshotSchema };
+const legacyReceiptSchema = z
+  .object({
+    snapshotId: z.string().regex(/^[a-f0-9]{64}$/),
+    tool: z.literal("arch-inspector"),
+    toolVersion: z.literal("0.3.0"),
+    irVersion: z.literal(LEGACY_IR_VERSION),
+    configHash: z.string().regex(/^[a-f0-9]{64}$/),
+    compilerOptionsHash: z.string().regex(/^[a-f0-9]{64}$/),
+    inputHash: z.string().regex(/^[a-f0-9]{64}$/),
+  })
+  .strict();
+
+const legacySourceImportSchema = sourceImportSchema.omit({ isProjectLike: true }).strict();
+const legacyModuleEdgeSchema = moduleEdgeSchema
+  .omit({ unknownImports: true })
+  .extend({ visibility: z.enum(["public", "deep", "mixed"]) })
+  .strict();
+const legacyArchitectureMetricsSchema = architectureMetricsSchema.omit({ unknownVisibilityImports: true }).strict();
+
+const legacyArchitectureSnapshotSchema = z
+  .object({
+    irVersion: z.literal(LEGACY_IR_VERSION),
+    receipt: legacyReceiptSchema,
+    project: z
+      .object({
+        root: z.string(),
+        tsconfig: z.string(),
+        sourceRoot: z.string(),
+      })
+      .strict(),
+    policy: z
+      .object({
+        failOn: z.array(z.string()),
+        provenance: provenanceSchema,
+      })
+      .strict(),
+    source: z
+      .object({
+        files: z.array(sourceFileSchema),
+        imports: z.array(legacySourceImportSchema),
+        provenance: provenanceSchema,
+      })
+      .strict(),
+    architecture: z
+      .object({
+        modules: z.array(architectureModuleSchema),
+        ownership: z.array(fileOwnershipSchema),
+        moduleEdges: z.array(legacyModuleEdgeSchema),
+        provenance: provenanceSchema,
+      })
+      .strict(),
+    analysis: z
+      .object({
+        cycles: z.array(architectureCycleSchema),
+        metrics: legacyArchitectureMetricsSchema,
+        findings: z.array(architectureFindingSchema),
+        provenance: provenanceSchema,
+      })
+      .strict(),
+  })
+  .strict();
+
+export { architectureSnapshotSchema, legacyArchitectureSnapshotSchema };

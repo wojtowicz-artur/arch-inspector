@@ -23,9 +23,9 @@ test("public entrypoint exposes the library API", () => {
     const sessionSnapshot = createAnalyzerSession().analyze(project.root);
     const diff = diffSnapshots(snapshot, snapshot);
 
-    assert.equal(IR_VERSION, "0.3");
+    assert.equal(IR_VERSION, "0.4");
     assert.deepEqual(IR_CONTRACT, {
-      version: "0.3",
+      version: "0.4",
       compatibility: "exact",
       unknownFields: "reject",
       receipt: "required",

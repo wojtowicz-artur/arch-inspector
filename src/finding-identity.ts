@@ -11,7 +11,11 @@ export function findingKey(finding: ArchitectureFinding): string {
   const evidence = [...(finding.provenance.evidence ?? [])].map((item) => `${item.kind}:${item.id}`).sort(compare);
   const semanticData = Object.fromEntries(
     Object.entries(finding.data ?? {})
-      .filter(([key]) => !/(?:message|description)$/i.test(key))
+      .filter(
+        ([key]) =>
+          !/(?:message|description)$/i.test(key) &&
+          !(finding.code === "architecture/cycle" && ["modules", "edgeIds"].includes(key)),
+      )
       .sort(([left], [right]) => compare(left, right)),
   );
   // Provenance anchors the finding to its source fact, while semantic data
@@ -22,7 +26,7 @@ export function findingKey(finding: ArchitectureFinding): string {
     derivedFrom: derivedFrom.length > 0 ? derivedFrom : undefined,
     evidence: evidence.length > 0 ? evidence : undefined,
     file: finding.file,
-    related: finding.related,
+    related: finding.code === "architecture/cycle" ? undefined : finding.related,
     data: semanticData,
   };
   return [finding.code, finding.category, canonicalStringify(identity)].join("\0");

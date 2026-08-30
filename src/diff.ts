@@ -1,15 +1,16 @@
 import fs from "node:fs";
-import type {
-  ArchitectureCycle,
-  ArchitectureFinding,
-  ArchitectureModule,
-  ArchitectureSnapshot,
-  FileOwnership,
-  ModuleEdge,
-  SourceFile,
-  SourceImport,
+import {
+  LEGACY_IR_VERSION,
+  type ArchitectureCycle,
+  type ArchitectureFinding,
+  type ArchitectureModule,
+  type ArchitectureSnapshot,
+  type FileOwnership,
+  type ModuleEdge,
+  type SourceFile,
+  type SourceImport,
 } from "./ir.js";
-import { validateArchitectureSnapshot, verifySnapshotReceipt } from "./ir-contract.js";
+import { migrateArchitectureSnapshot, validateArchitectureSnapshot, verifySnapshotReceipt } from "./ir-contract.js";
 import { findingKey } from "./rules.js";
 import { canonicalStringify, compare } from "./stable.js";
 
@@ -107,6 +108,7 @@ function metricDeltas(before: ArchitectureSnapshot, after: ArchitectureSnapshot)
     "moduleEdges",
     "cycles",
     "deepImports",
+    "unknownVisibilityImports",
   ] as const;
   for (const key of keys) {
     const beforeValue = before.analysis.metrics[key] ?? 0;
@@ -225,6 +227,14 @@ export function loadSnapshot(filePath: string): ArchitectureSnapshot {
   } catch (error) {
     const reason = error instanceof Error ? ` ${error.message}` : "";
     throw new Error(`Could not read architecture snapshot '${filePath}'.${reason}`, { cause: error });
+  }
+  if (
+    parsed &&
+    typeof parsed === "object" &&
+    "irVersion" in parsed &&
+    (parsed as { irVersion?: unknown }).irVersion === LEGACY_IR_VERSION
+  ) {
+    return migrateArchitectureSnapshot(parsed, `'${filePath}'`);
   }
   const snapshot = validateArchitectureSnapshot(parsed, `'${filePath}'`);
   verifySnapshotReceipt(snapshot, `'${filePath}'`);
