@@ -153,9 +153,9 @@ test("snapshot loader validates the hardened IR shape and provenance", () => {
     fs.writeFileSync(snapshotPath, JSON.stringify(malformed), "utf8");
     assert.throws(() => loadSnapshot(snapshotPath), /Architecture IR 0\.4 snapshot/);
 
-    const legacy = JSON.parse(JSON.stringify(snapshot)) as { irVersion: string };
-    legacy.irVersion = "0.1";
-    fs.writeFileSync(snapshotPath, JSON.stringify(legacy), "utf8");
+    const unsupported = JSON.parse(JSON.stringify(snapshot)) as { irVersion: string };
+    unsupported.irVersion = "0.3";
+    fs.writeFileSync(snapshotPath, JSON.stringify(unsupported), "utf8");
     assert.throws(() => loadSnapshot(snapshotPath), /Architecture IR 0\.4 snapshot/);
 
     const incomparable = structuredClone(snapshot);

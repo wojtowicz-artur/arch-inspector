@@ -1,4 +1,3 @@
-export const LEGACY_IR_VERSION = "0.3" as const;
 export const IR_VERSION = "0.4" as const;
 export const TOOL_VERSION = "0.4.0" as const;
 export const IR_CONTRACT = {

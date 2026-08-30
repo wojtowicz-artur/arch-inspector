@@ -100,11 +100,9 @@ Konfiguracja projektu, snapshoty IR i deklaracje `RuleSpec` są walidowane
 runtime przez Zod. Analyzer waliduje również snapshot przed zwróceniem go do
 konsumenta, a receipt jest sprawdzany przy zapisie/odczycie. Błędy na tych
 granicach zawierają ścieżkę do niepoprawnego pola zamiast cichego rzutowania
-danych. Przykładowy legacy kontrakt IR 0.3 znajduje się w
-`test/fixtures/architecture-0.3.json`. Aktualny kontrakt IR 0.4 jest jawnie
-`exact`: receipt jest wymagany, a nieznane pola są odrzucane. `loadSnapshot`
-sprawdza receipt starego snapshotu i migruje IR 0.3 do 0.4; pozostałe wersje
-wymagają osobnego adaptera.
+danych. Aktualny kontrakt IR 0.4 jest jawnie `exact`: receipt jest wymagany,
+a nieznane pola oraz starsze wersje IR są odrzucane. Migracja z wcześniejszych
+wersji wymaga osobnego adaptera poza biblioteką.
 
 `arch graph` emituje deterministyczny graf modułów w formacie Graphviz DOT. Węzły
 uczestniczące w cyklu są wyróżnione, a etykiety krawędzi pokazują liczbę
