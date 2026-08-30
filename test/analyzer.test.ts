@@ -2,8 +2,9 @@ import assert from "node:assert/strict";
 import fs from "node:fs";
 import path from "node:path";
 import test from "node:test";
-import { analyzeProject } from "../src/analyzer.js";
+import { analyzeProject, createAnalyzerSession } from "../src/analyzer.js";
 import { diffSnapshots } from "../src/diff.js";
+import { findingKey } from "../src/finding-identity.js";
 import {
   createCollidingModulesProject,
   createProject,
@@ -54,6 +55,147 @@ test("resolves path aliases and reports cycles and deep imports", () => {
     );
     assert.ok(snapshot.analysis.findings.some((finding) => finding.code === "architecture/deep-import"));
     assert.ok(snapshot.analysis.findings.some((finding) => finding.code === "architecture/cycle"));
+  } finally {
+    project.cleanup();
+  }
+});
+
+test("does not expose nested index barrels as public module entrypoints", () => {
+  const project = createProject({
+    compilerOptions: { rootDir: "." },
+    files: {
+      "src/modules/a/index.ts": 'export { value } from "./internal/index";\n',
+      "src/modules/a/internal/index.ts": "export const value = true;\n",
+      "src/modules/b/index.ts": 'import { value } from "../a/internal/index";\nexport const result = value;\n',
+    },
+  });
+  try {
+    const snapshot = analyzeProject(project.root);
+    assert.deepEqual(snapshot.architecture.modules.find((module) => module.id === "a")?.entrypoints, [
+      "src/modules/a/index.ts",
+    ]);
+    assert.equal(snapshot.architecture.modules.find((module) => module.id === "b")?.entrypoints.length, 1);
+    assert.equal(snapshot.analysis.metrics.deepImports, 1);
+    assert.equal(snapshot.analysis.findings.filter((finding) => finding.code === "architecture/deep-import").length, 1);
+  } finally {
+    project.cleanup();
+  }
+});
+
+test("keeps unresolved and out-of-scope project aliases visible", () => {
+  const project = createProject({
+    include: ["src/app.ts"],
+    compilerOptions: {
+      baseUrl: ".",
+      paths: {
+        "@missing/*": ["src/missing/*"],
+        "@hidden/*": ["src/hidden/*"],
+      },
+    },
+    files: {
+      "src/app.ts":
+        'import missing from "@missing/value";\nimport hidden from "@hidden/value";\nexport const result = missing && hidden;\n',
+      "src/hidden/value.ts": "export default true;\n",
+    },
+  });
+  try {
+    const snapshot = analyzeProject(project.root);
+    const missing = snapshot.source.imports.find((edge) => edge.specifier === "@missing/value");
+    const hidden = snapshot.source.imports.find((edge) => edge.specifier === "@hidden/value");
+    assert.equal(missing?.resolution, "unresolved");
+    assert.equal(missing?.isProjectAlias, true);
+    assert.equal(hidden?.resolution, "out-of-scope");
+    assert.equal(hidden?.toFile, "src/hidden/value.ts");
+    assert.equal(snapshot.analysis.metrics.unresolvedImports, 1);
+    assert.equal(snapshot.analysis.metrics.outOfScopeImports, 1);
+    assert.equal(
+      snapshot.analysis.findings.filter((finding) => finding.code === "architecture/unresolved-import").length,
+      1,
+    );
+    assert.equal(
+      snapshot.analysis.findings.filter((finding) => finding.code === "architecture/out-of-scope-import").length,
+      1,
+    );
+  } finally {
+    project.cleanup();
+  }
+});
+
+test("discovers src modules when compiler rootDir is the project root", () => {
+  const project = createProject({
+    compilerOptions: { rootDir: "." },
+    files: {
+      "src/modules/a/index.ts": "export const a = true;\n",
+      "src/modules/b/index.ts": "export const b = true;\n",
+      "tests/inspector.ts": "export const test = true;\n",
+    },
+  });
+  try {
+    const snapshot = analyzeProject(project.root);
+    assert.equal(snapshot.project.sourceRoot, "src");
+    assert.ok(snapshot.architecture.modules.some((module) => module.id === "a"));
+    assert.ok(snapshot.architecture.modules.some((module) => module.id === "b"));
+  } finally {
+    project.cleanup();
+  }
+});
+
+test("keeps type-aware analysis in each project-reference compiler context", () => {
+  const project = createProject({
+    archConfig: { typeAware: true },
+    compilerOptions: { rootDir: "." },
+    files: {
+      "src/app.ts":
+        'import { type User, value } from "../packages/lib/src/index";\nexport const result: User = { id: value };\n',
+      "packages/lib/src/index.ts": "export type User = { id: number };\nexport const value = 1;\n",
+    },
+  });
+  try {
+    fs.writeFileSync(
+      path.join(project.root, "tsconfig.json"),
+      JSON.stringify(
+        {
+          compilerOptions: {
+            target: "ES2022",
+            module: "ESNext",
+            moduleResolution: "Bundler",
+            rootDir: ".",
+            baseUrl: ".",
+          },
+          include: ["src/**/*.ts"],
+          references: [{ path: "packages/lib" }],
+        },
+        null,
+        2,
+      ),
+      "utf8",
+    );
+    fs.writeFileSync(
+      path.join(project.root, "packages/lib/tsconfig.json"),
+      JSON.stringify(
+        {
+          compilerOptions: {
+            target: "ES2022",
+            module: "CommonJS",
+            moduleResolution: "Node10",
+            rootDir: "src",
+            composite: true,
+          },
+          include: ["src/**/*.ts"],
+        },
+        null,
+        2,
+      ),
+      "utf8",
+    );
+
+    const snapshot = analyzeProject(project.root);
+    const edge = snapshot.source.imports.find((candidate) => candidate.fromFile === "src/app.ts");
+    assert.equal(snapshot.project.sourceRoot, "src");
+    assert.deepEqual(edge?.symbols, [
+      { name: "User", kind: "type" },
+      { name: "value", kind: "value" },
+    ]);
   } finally {
     project.cleanup();
   }
@@ -280,6 +422,30 @@ test("adds optional TypeScript checker evidence for imported exports", () => {
   }
 });
 
+test("reuses an analyzer session and invalidates semantic caches when sources change", () => {
+  const project = createProject({
+    archConfig: { typeAware: true },
+    files: {
+      "src/app.ts": 'import { Item } from "./dep";\nexport const value = new Item();\n',
+      "src/dep.ts": "export class Item {}\n",
+    },
+  });
+  try {
+    const session = createAnalyzerSession();
+    const first = session.analyze(project.root);
+    const repeated = session.analyze(project.root);
+    assert.equal(repeated.receipt.snapshotId, first.receipt.snapshotId);
+    assert.deepEqual(first.source.imports[0]?.symbols, [{ name: "Item", kind: "both" }]);
+
+    fs.writeFileSync(path.join(project.root, "src/dep.ts"), "export interface Item {}\n", "utf8");
+    const changed = session.analyze(project.root);
+    assert.notEqual(changed.receipt.inputHash, first.receipt.inputHash);
+    assert.deepEqual(changed.source.imports[0]?.symbols, [{ name: "Item", kind: "type" }]);
+  } finally {
+    project.cleanup();
+  }
+});
+
 test("does not build checker metadata unless type-aware mode is enabled", () => {
   const project = createProject({
     files: {
@@ -322,6 +488,82 @@ test("rejects malformed project configuration at the boundary", () => {
   });
   try {
     assert.throws(() => analyzeProject(project.root), /Invalid arch\.config\.json: noCycles/);
+  } finally {
+    project.cleanup();
+  }
+});
+
+test("rejects unknown failOn selectors and missing configured module roots", () => {
+  const unknownPolicy = createProject({
+    archConfig: { failOn: ["deep-improt"] },
+    files: { "src/app.ts": "export const app = true;\n" },
+  });
+  const missingRoot = createProject({
+    archConfig: { moduleRoots: ["src/not-a-module"] },
+    files: { "src/app.ts": "export const app = true;\n" },
+  });
+  try {
+    assert.throws(() => analyzeProject(unknownPolicy.root), /Unknown failOn selector/);
+    assert.throws(() => analyzeProject(missingRoot.root), /Configured module root does not exist/);
+  } finally {
+    unknownPolicy.cleanup();
+    missingRoot.cleanup();
+  }
+});
+
+test("accepts canonical and short built-in failOn selectors", () => {
+  const project = createProject({
+    archConfig: {
+      failOn: ["boundary-violation", "architecture/deep-import", "unresolved-import", "no-public-entrypoint"],
+    },
+    files: { "src/app.ts": "export const app = true;\n" },
+  });
+  try {
+    assert.doesNotThrow(() => analyzeProject(project.root));
+  } finally {
+    project.cleanup();
+  }
+});
+
+test("uses custom forbidden dependency messages", () => {
+  const project = createProject({
+    archConfig: {
+      forbiddenDependencies: [{ from: "a", to: "b", message: "CUSTOM" }],
+    },
+    files: {
+      "src/modules/a/index.ts": 'import { b } from "../b";\nexport const a = b;\n',
+      "src/modules/b/index.ts": "export const b = true;\n",
+    },
+  });
+  try {
+    const finding = analyzeProject(project.root).analysis.findings.find(
+      (candidate) => candidate.code === "architecture/forbidden-dependency",
+    );
+    assert.equal(finding?.message, "CUSTOM");
+  } finally {
+    project.cleanup();
+  }
+});
+
+test("keeps duplicate forbidden dependency rules distinct in finding identity", () => {
+  const project = createProject({
+    archConfig: {
+      forbiddenDependencies: [
+        { from: "a", to: "b", message: "first" },
+        { from: "a", to: "b", message: "second" },
+      ],
+    },
+    files: {
+      "src/modules/a/index.ts": 'import { b } from "../b";\nexport const a = b;\n',
+      "src/modules/b/index.ts": "export const b = true;\n",
+    },
+  });
+  try {
+    const findings = analyzeProject(project.root).analysis.findings.filter(
+      (candidate) => candidate.code === "architecture/forbidden-dependency",
+    );
+    assert.equal(findings.length, 2);
+    assert.notEqual(findingKey(findings[0]), findingKey(findings[1]));
   } finally {
     project.cleanup();
   }

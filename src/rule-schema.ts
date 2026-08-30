@@ -32,6 +32,79 @@ const ruleFindingTemplateSchema = z
   })
   .strict();
 
+export const ruleFieldsBySource: Readonly<Record<z.infer<typeof ruleSourceSchema>, readonly string[]>> = {
+  cycles: ["id", "modules", "edgeIds"],
+  imports: [
+    "id",
+    "fromFile",
+    "toFile",
+    "specifier",
+    "line",
+    "resolution",
+    "resolutionConfidence",
+    "isProjectAlias",
+    "importKind",
+    "typeOnly",
+    "symbols",
+    "symbolKinds",
+    "fromModule",
+    "toModule",
+    "target",
+    "isInternal",
+    "isCrossModule",
+    "isPublicApi",
+    "isUnresolvedInternal",
+    "isOutOfScope",
+    "isDynamic",
+    "isBoundaryViolation",
+    "boundaryZone",
+    "boundaryMessage",
+  ],
+  forbiddenDependencies: [
+    "id",
+    "fromFile",
+    "toFile",
+    "specifier",
+    "line",
+    "resolution",
+    "resolutionConfidence",
+    "isProjectAlias",
+    "importKind",
+    "typeOnly",
+    "symbols",
+    "symbolKinds",
+    "fromModule",
+    "toModule",
+    "target",
+    "isInternal",
+    "isCrossModule",
+    "isPublicApi",
+    "isUnresolvedInternal",
+    "isOutOfScope",
+    "isDynamic",
+    "isBoundaryViolation",
+    "boundaryZone",
+    "boundaryMessage",
+    "forbiddenMessage",
+  ],
+  modules: ["moduleId", "hasPublicEntrypoint", "hasPeers", "related"],
+};
+
+function validateRuleFieldReference(
+  source: z.infer<typeof ruleSourceSchema>,
+  field: string,
+  path: (string | number)[],
+  context: z.RefinementCtx,
+): void {
+  if (!ruleFieldsBySource[source].includes(field)) {
+    context.addIssue({
+      code: "custom",
+      path,
+      message: `Field '${field}' is not available for '${source}'.`,
+    });
+  }
+}
+
 export const ruleSpecSchema = z
   .object({
     code: z.string().min(1),
@@ -40,7 +113,28 @@ export const ruleSpecSchema = z
     where: z.array(ruleConditionSchema).optional(),
     finding: ruleFindingTemplateSchema,
   })
-  .strict();
+  .strict()
+  .superRefine((rule, context) => {
+    for (const [index, condition] of (rule.where ?? []).entries()) {
+      validateRuleFieldReference(rule.source, condition.field, ["where", index, "field"], context);
+      if (typeof condition.value === "object" && condition.value !== null && "field" in condition.value) {
+        validateRuleFieldReference(rule.source, condition.value.field, ["where", index, "value", "field"], context);
+      }
+    }
+    for (const [name, reference] of Object.entries({
+      file: rule.finding.file,
+      line: rule.finding.line,
+      related: rule.finding.related,
+    })) {
+      if (reference) validateRuleFieldReference(rule.source, reference.field, ["finding", name, "field"], context);
+    }
+    for (const [name, reference] of Object.entries(rule.finding.data ?? {})) {
+      validateRuleFieldReference(rule.source, reference.field, ["finding", "data", name, "field"], context);
+    }
+    for (const match of rule.finding.message.matchAll(/\$\{([^}]+)\}/g)) {
+      validateRuleFieldReference(rule.source, match[1], ["finding", "message"], context);
+    }
+  });
 
 export const ruleSpecListSchema = z.array(ruleSpecSchema);
 

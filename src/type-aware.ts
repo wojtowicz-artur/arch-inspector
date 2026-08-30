@@ -129,36 +129,46 @@ function importInfo(checker: ts.TypeChecker, node: ts.ImportDeclaration | ts.Exp
 }
 
 /**
- * Build semantic metadata with a TypeScript Program. The pass is deliberately
+ * Build semantic metadata with TypeScript Programs, one per owning project
+ * reference. The pass is deliberately
  * opt-in: projects that only need the syntactic graph do not pay for a
  * checker, while consumers can use the same source-edge identity when they
  * need imported export names and their type/value nature.
  */
 export function buildTypeAwareImportIndex(project: DiscoveredProject): TypeAwareImportIndex {
-  const options = project.compilerOptions;
-  const host = ts.createCompilerHost(options, true);
-  const readFile = host.readFile?.bind(host);
-  if (readFile) {
-    host.readFile = (fileName) => project.fileContents.get(normalized(fileName)) ?? readFile(fileName);
-  }
-  const program = ts.createProgram({ rootNames: project.files, options, host });
-  const checker = program.getTypeChecker();
   const projectFiles = new Set(project.files.map(normalized));
   const result = new Map<string, TypeAwareImportInfo>();
 
-  for (const sourceFile of program.getSourceFiles()) {
-    if (!projectFiles.has(normalized(sourceFile.fileName))) continue;
-    const visit = (node: ts.Node): void => {
-      if (
-        (ts.isImportDeclaration(node) || ts.isExportDeclaration(node)) &&
-        node.moduleSpecifier &&
-        ts.isStringLiteral(node.moduleSpecifier)
-      ) {
-        result.set(typeAwareImportKey(sourceFile.fileName, node.getStart(sourceFile)), importInfo(checker, node));
-      }
-      ts.forEachChild(node, visit);
-    };
-    visit(sourceFile);
+  const configurations =
+    project.filesByConfig.size > 0
+      ? [...project.filesByConfig.entries()]
+      : [[project.tsconfigPath, project.files] as const];
+  for (const [configPath, rootNames] of configurations.sort(([left], [right]) => compare(left, right))) {
+    const options = project.compilerOptionsByConfig.get(configPath) ?? project.compilerOptions;
+    const ownedFiles = new Set(rootNames.map(normalized));
+    const host = ts.createCompilerHost(options, true);
+    const readFile = host.readFile?.bind(host);
+    if (readFile) {
+      host.readFile = (fileName) => project.fileContents.get(normalized(fileName)) ?? readFile(fileName);
+    }
+    const program = ts.createProgram({ rootNames: [...rootNames], options, host });
+    const checker = program.getTypeChecker();
+
+    for (const sourceFile of program.getSourceFiles()) {
+      if (!projectFiles.has(normalized(sourceFile.fileName)) || !ownedFiles.has(normalized(sourceFile.fileName)))
+        continue;
+      const visit = (node: ts.Node): void => {
+        if (
+          (ts.isImportDeclaration(node) || ts.isExportDeclaration(node)) &&
+          node.moduleSpecifier &&
+          ts.isStringLiteral(node.moduleSpecifier)
+        ) {
+          result.set(typeAwareImportKey(sourceFile.fileName, node.getStart(sourceFile)), importInfo(checker, node));
+        }
+        ts.forEachChild(node, visit);
+      };
+      visit(sourceFile);
+    }
   }
   return result;
 }

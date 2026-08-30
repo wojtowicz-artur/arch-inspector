@@ -41,6 +41,7 @@ const sourceImportSchema = z
     importKind: z.enum(["static", "export", "dynamic", "require"]),
     resolution: z.enum(["internal", "external", "asset", "unresolved", "out-of-scope"]),
     resolutionConfidence: z.enum(["exact", "syntactic", "ambiguous"]).optional(),
+    isProjectAlias: z.boolean().optional(),
     typeOnly: z.boolean(),
     symbols: z
       .array(

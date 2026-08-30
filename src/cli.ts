@@ -4,8 +4,8 @@ import path from "node:path";
 import { analyzeProject } from "./analyzer.js";
 import { diffSnapshots, loadSnapshot, SnapshotComparisonError, type ArchitectureDiff } from "./diff.js";
 import { analyzeGitRef } from "./git.js";
+import { isKnownFailOnSelector, matchesFailOn } from "./fail-on.js";
 import { renderModuleGraphDot } from "./graph.js";
-import { matchesFailOn } from "./rules.js";
 import type { ArchitectureFinding, ArchitectureSnapshot, SourceImport } from "./ir.js";
 import { renderSarif } from "./sarif.js";
 
@@ -17,7 +17,8 @@ function usage(): string {
   arch diff <git-ref|snapshot.json> [project] [--json|--sarif] [--out <file>] [--check] [--fail-on <selector,...>]
   arch audit [git-ref|snapshot.json] [project] [--json|--sarif] [--out <file>] [--fail-on <selector,...>]
 
-Selectors include: all, violations, cycles, deep-imports, forbidden-dependency.
+Selectors include: all, violations, built-in short aliases (cycles, deep-imports,
+forbidden-dependency) or canonical finding codes such as architecture/cycle.
 Without --fail-on, check is report-only unless the project config declares failOn.
 The inspector reads an existing TypeScript project and emits a deterministic Architecture IR snapshot.
 The diff command compares the current project with a comparable snapshot or Git ref without changing the worktree.
@@ -225,7 +226,12 @@ function diffProject(parsed: ParsedArgs): { diff: ArchitectureDiff; current: Arc
 }
 
 function effectivePolicy(snapshot: ArchitectureSnapshot, parsed: ParsedArgs): string[] {
-  if (parsed.failOn) return parsed.failOn;
+  if (parsed.failOn) {
+    const customCodes = new Set(snapshot.analysis.findings.map((finding) => finding.code));
+    const unknown = parsed.failOn.filter((selector) => !isKnownFailOnSelector(selector, customCodes));
+    if (unknown.length > 0) throw new Error(`Unknown failOn selector(s): ${unknown.join(", ")}.`);
+    return parsed.failOn;
+  }
   return parsed.check ? ["all"] : snapshot.policy.failOn;
 }
 
@@ -237,6 +243,7 @@ function main(): void {
   }
   if (parsed.command === "diff" || parsed.command === "audit") {
     const { diff, current } = diffProject(parsed);
+    const failOn = effectivePolicy(current, parsed);
     const output = parsed.sarif
       ? renderSarif(parsed.command === "audit" ? diff.introducedViolations : diff.analysis.findings.added)
       : parsed.json
@@ -247,12 +254,12 @@ function main(): void {
       fs.writeFileSync(path.resolve(parsed.out), fileContents, "utf8");
     }
     process.stdout.write(output);
-    const failOn = effectivePolicy(current, parsed);
     if ((parsed.check || parsed.failOn) && diff.introducedViolations.some((finding) => matchesFailOn(finding, failOn)))
       process.exitCode = 1;
     return;
   }
   const snapshot = inspectSnapshot(parsed.project);
+  const failOn = parsed.command === "check" ? effectivePolicy(snapshot, parsed) : [];
   const output = parsed.sarif
     ? renderSarif(snapshot.analysis.findings)
     : parsed.json
@@ -270,7 +277,6 @@ function main(): void {
   }
   process.stdout.write(output);
   if (parsed.command === "check") {
-    const failOn = effectivePolicy(snapshot, parsed);
     if (snapshot.analysis.findings.some((finding) => matchesFailOn(finding, failOn))) process.exitCode = 1;
   }
 }

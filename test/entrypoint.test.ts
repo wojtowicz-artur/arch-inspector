@@ -3,12 +3,15 @@ import test from "node:test";
 import {
   analyzeProject,
   BUILTIN_RULE_PACK,
+  createAnalyzerSession,
   createRuleRegistry,
   diffSnapshots,
   evaluateRules,
   IR_CONTRACT,
   IR_VERSION,
   renderModuleGraphDot,
+  matchesFailOn,
+  normalizeFailOnSelector,
   type RuleSpec,
 } from "../src/index.js";
 import { createSampleProject } from "./helpers/projects.js";
@@ -17,6 +20,7 @@ test("public entrypoint exposes the library API", () => {
   const project = createSampleProject();
   try {
     const snapshot = analyzeProject(project.root);
+    const sessionSnapshot = createAnalyzerSession().analyze(project.root);
     const diff = diffSnapshots(snapshot, snapshot);
 
     assert.equal(IR_VERSION, "0.3");
@@ -27,6 +31,11 @@ test("public entrypoint exposes the library API", () => {
       receipt: "required",
     });
     assert.equal(snapshot.irVersion, IR_VERSION);
+    assert.equal(sessionSnapshot.receipt.snapshotId, snapshot.receipt.snapshotId);
+    assert.equal(normalizeFailOnSelector("deep-imports"), "architecture/deep-import");
+    const violation = snapshot.analysis.findings.find((finding) => finding.category === "violation");
+    assert.ok(violation);
+    assert.equal(matchesFailOn(violation, ["all"]), true);
     assert.equal(diff.hasRegressions, false);
     assert.match(renderModuleGraphDot(snapshot), /^digraph architecture \{/);
   } finally {
@@ -86,6 +95,39 @@ test("accepts custom declarative rule specifications", () => {
           [{ ...customRule, where: [{ field: "isInternal", operator: "unsupported" }] } as unknown as RuleSpec],
         ),
       /Invalid rule specification/,
+    );
+  } finally {
+    project.cleanup();
+  }
+});
+
+test("rejects rule fields that are not part of the selected fact collection", () => {
+  const project = createSampleProject();
+  try {
+    const snapshot = analyzeProject(project.root);
+    assert.throws(
+      () =>
+        evaluateRules(
+          {
+            config: {},
+            modules: snapshot.architecture.modules,
+            imports: snapshot.source.imports,
+            fileToModule: new Map(snapshot.architecture.ownership.map((entry) => [entry.file, entry.module])),
+            moduleEntrypoints: new Map(
+              snapshot.architecture.modules.map((module) => [module.id, new Set(module.entrypoints)]),
+            ),
+            cycles: snapshot.analysis.cycles,
+          },
+          [
+            {
+              code: "test/typo",
+              source: "imports",
+              where: [{ field: "isIntenal", operator: "eq", value: true }],
+              finding: { category: "observation", level: "info", message: "typo" },
+            },
+          ],
+        ),
+      /not available for 'imports'/,
     );
   } finally {
     project.cleanup();

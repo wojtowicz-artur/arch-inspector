@@ -41,6 +41,19 @@ test("check is report-only until a finding policy is explicitly selected", () =>
   }
 });
 
+test("rejects unknown command-line failOn selectors", () => {
+  const project = createSampleProject();
+  try {
+    const result = spawnSync(process.execPath, [cliPath, "check", project.root, "--fail-on", "deep-improt"], {
+      encoding: "utf8",
+    });
+    assert.equal(result.status, 2);
+    assert.match(result.stderr, /Unknown failOn selector/);
+  } finally {
+    project.cleanup();
+  }
+});
+
 test("audit gates only architecture violations introduced after a saved snapshot", () => {
   const project = createProject({
     files: {

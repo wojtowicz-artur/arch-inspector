@@ -15,6 +15,10 @@ npm run benchmark
 npm run benchmark -- --iterations 10 --warmup 2 --json
 ```
 
-The command fails when a corpus invariant disappears. Timings are reported for
-performance work, but are intentionally not used as a CI threshold because
-they depend on the host machine and TypeScript cache state.
+The command fails when a corpus invariant disappears. Each case reports its
+first (cold) analysis and the median/p95 of repeated (warm) analyses through a
+shared `AnalyzerSession`; this makes the one-time TypeScript checker cost
+visible without hiding the steady-state cost of editor/CI integrations.
+Timings are reported for performance work, but are intentionally not used as a
+CI threshold because they depend on the host machine and TypeScript cache
+state.

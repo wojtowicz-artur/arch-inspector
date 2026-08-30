@@ -90,6 +90,21 @@ function isLocalLike(specifier: string): boolean {
   return specifier.startsWith(".") || specifier.startsWith("/") || specifier.startsWith("#");
 }
 
+function matchesPathPattern(specifier: string, pattern: string): boolean {
+  const wildcard = pattern.indexOf("*");
+  if (wildcard < 0) return specifier === pattern;
+  const prefix = pattern.slice(0, wildcard);
+  const suffix = pattern.slice(wildcard + 1);
+  return (
+    specifier.startsWith(prefix) && specifier.endsWith(suffix) && specifier.length >= prefix.length + suffix.length
+  );
+}
+
+function isProjectAlias(specifier: string, compilerOptions: ts.CompilerOptions): boolean {
+  const paths = compilerOptions.paths;
+  return paths !== undefined && Object.keys(paths).some((pattern) => matchesPathPattern(specifier, pattern));
+}
+
 function isAssetSpecifier(specifier: string): boolean {
   const withoutQuery = specifier.split(/[?#]/, 1)[0].toLowerCase();
   return /\.(?:css|scss|sass|less|styl|pcss|svg|png|jpe?g|gif|webp|avif|ico|woff2?|ttf|eot|mp4|webm|mp3|wav)$/.test(
@@ -105,32 +120,49 @@ function resolveModule(
   project: DiscoveredProject,
   specifier: string,
   containingFile: string,
+  resolutionCache: ModuleResolutionCache = project.resolutionCache,
 ): ts.ResolvedModule | undefined {
   const cacheKey = `${containingFile}\0${specifier}`;
-  if (project.resolutionCache.has(cacheKey)) return project.resolutionCache.get(cacheKey);
+  if (resolutionCache.has(cacheKey)) return resolutionCache.get(cacheKey);
   const compilerOptions = project.compilerOptionsByFile.get(containingFile) ?? project.compilerOptions;
   const resolved = ts.resolveModuleName(specifier, containingFile, compilerOptions, ts.sys).resolvedModule;
-  project.resolutionCache.set(cacheKey, resolved);
+  resolutionCache.set(cacheKey, resolved);
   return resolved;
 }
 
-export function collectEdges(project: DiscoveredProject, typeAware?: TypeAwareImportIndex): SourceImport[] {
+/** Parsed source files can be shared by repeated analyses in an AnalyzerSession. */
+export type SourceAstCache = Map<string, ts.SourceFile>;
+/** Module resolution results are mutable analysis state, not project facts. */
+export type ModuleResolutionCache = Map<string, ts.ResolvedModule | undefined>;
+
+export function collectEdges(
+  project: DiscoveredProject,
+  typeAware?: TypeAwareImportIndex,
+  sourceAstCache?: SourceAstCache,
+  resolutionCache?: ModuleResolutionCache,
+): SourceImport[] {
   const projectFiles = new Set(project.files.map((file) => path.normalize(file)));
   const edges: SourceImport[] = [];
 
   for (const file of project.files) {
     const text = project.fileContents.get(file) ?? "";
-    const sourceFile = sourceFileFor(file, text);
+    const sourceFile = sourceAstCache?.get(file) ?? sourceFileFor(file, text);
+    sourceAstCache?.set(file, sourceFile);
     const imports = collectImports(sourceFile);
     const occurrences = new Map<string, number>();
     for (const current of imports) {
-      const resolved = resolveModule(project, current.specifier, file);
+      const resolved = resolveModule(project, current.specifier, file, resolutionCache);
       const resolvedFile = resolved ? path.normalize(resolved.resolvedFileName) : undefined;
       const internal = resolvedFile !== undefined && projectFiles.has(resolvedFile);
+      const compilerOptions = project.compilerOptionsByFile.get(file) ?? project.compilerOptions;
+      const projectAlias = isProjectAlias(current.specifier, compilerOptions);
       const asset =
         isAssetSpecifier(current.specifier) || (resolvedFile !== undefined && isAssetSpecifier(resolvedFile));
       const outOfScope =
-        resolvedFile !== undefined && !internal && isLocalLike(current.specifier) && !isNodeModulesPath(resolvedFile);
+        resolvedFile !== undefined &&
+        !internal &&
+        (isLocalLike(current.specifier) || projectAlias) &&
+        !isNodeModulesPath(resolvedFile);
       const resolution = internal
         ? "internal"
         : asset
@@ -139,13 +171,16 @@ export function collectEdges(project: DiscoveredProject, typeAware?: TypeAwareIm
             ? "out-of-scope"
             : resolvedFile || isBuiltin(current.specifier)
               ? "external"
-              : current.kind === "dynamic" || current.kind === "require" || isLocalLike(current.specifier)
+              : current.kind === "dynamic" ||
+                  current.kind === "require" ||
+                  isLocalLike(current.specifier) ||
+                  projectAlias
                 ? "unresolved"
                 : "external";
       const resolutionConfidence =
         resolvedFile !== undefined || isBuiltin(current.specifier)
           ? "exact"
-          : current.kind === "dynamic" || current.kind === "require" || isLocalLike(current.specifier)
+          : current.kind === "dynamic" || current.kind === "require" || isLocalLike(current.specifier) || projectAlias
             ? "ambiguous"
             : "syntactic";
       const location = sourceFile.getLineAndCharacterOfPosition(current.position);
@@ -169,6 +204,7 @@ export function collectEdges(project: DiscoveredProject, typeAware?: TypeAwareIm
         importKind: current.kind,
         resolution,
         resolutionConfidence,
+        ...(projectAlias ? { isProjectAlias: true } : {}),
         typeOnly: current.typeOnly,
         ...(semantic ? { symbols: semantic.symbols } : {}),
         location: { line: location.line + 1, column: location.character + 1 },

@@ -173,8 +173,10 @@ w kolekcji `imports` dla deklaratywnych reguł.
 
 Wersjonowany benchmark corpus znajduje się w `benchmark/corpus`. `npm run
 benchmark` sprawdza minimalne fakty IR i deterministyczność snapshotu, a także
-raportuje medianę/p95 oraz orientacyjny narzut trybu type-aware. Czasy nie są
-progiem CI, ponieważ zależą od sprzętu i cache TypeScriptu.
+raportuje koszt pierwszej (cold) analizy oraz medianę/p95 powtórzeń (warm) w
+współdzielonej sesji. Pokazuje to jednorazowy narzut trybu type-aware i jego
+koszt ustalony po rozgrzaniu cache. Czasy nie są progiem CI, ponieważ zależą od
+sprzętu i cache TypeScriptu.
 
 Domyślnie inspector pomija artefakty `node_modules`, `.next`, `dist`, `build`, `coverage`, `.turbo` i `.cache`. `include` oraz `exclude` odnoszą się do ścieżek względnych względem katalogu z `tsconfig.json`. `modules` pozwala opisać moduły, które nie mają fizycznego `index.ts`. Importy CSS/SCSS, obrazów i fontów są raportowane jako `asset`, a nie jako błędne `unresolved`. Import lokalny rozwiązany do pliku wyłączonego przez `include`/`exclude` ma stan `out-of-scope` i zachowuje `toFile`, dzięki czemu brak krawędzi nie jest mylony z brakiem pliku. Computed `import()`/`require()` są zachowywane jako krawędzie o niepewności `ambiguous` (wzorce template są oznaczane `*`), zamiast znikać z grafu.
 
@@ -185,11 +187,16 @@ To jeszcze nie jest framework ani pełny system kontraktów. IR jest granicą, z
 CLI korzysta z tego samego publicznego entrypointu co integracje Node.js:
 
 ```ts
-import { analyzeProject, diffSnapshots } from "arch-inspector";
+import { analyzeProject, createAnalyzerSession, diffSnapshots } from "arch-inspector";
 
 const base = analyzeProject(".");
 const current = analyzeProject(".");
 const diff = diffSnapshots(base, current);
+
+// For repeated editor/CI analyses, reuse parsed ASTs and type-aware metadata.
+const session = createAnalyzerSession();
+const first = session.analyze(".");
+const next = session.analyze(".");
 ```
 
 Źródło entrypointu znajduje się w `src/index.ts`; `dist/` zawiera wyłącznie wygenerowany JavaScript i deklaracje `.d.ts`.

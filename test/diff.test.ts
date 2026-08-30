@@ -92,6 +92,28 @@ test("keeps import identity stable when only the source location moves", () => {
   }
 });
 
+test("keeps finding identity stable when only location and rendered text move", () => {
+  const project = createSampleProject();
+  try {
+    const before = analyzeProject(project.root);
+    const current = structuredClone(before);
+    const finding = current.analysis.findings.find((candidate) => candidate.code === "architecture/deep-import");
+    assert.ok(finding);
+    finding.line = (finding.line ?? 1) + 10;
+    finding.message = "display text changed";
+
+    const diff = diffSnapshots(before, current);
+
+    assert.equal(diff.analysis.findings.added.length, 0);
+    assert.equal(diff.analysis.findings.removed.length, 0);
+    assert.equal(diff.introducedViolations.length, 0);
+    assert.equal(diff.hasRegressions, false);
+    assert.equal(diff.analysis.findings.changed.length, 1);
+  } finally {
+    project.cleanup();
+  }
+});
+
 test("snapshot loader validates the hardened IR shape and provenance", () => {
   const project = createSampleProject();
   try {

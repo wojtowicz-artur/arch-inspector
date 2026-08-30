@@ -5,7 +5,7 @@
  * inspector into CI, editor tooling or another Node.js application without
  * invoking a child process.
  */
-export { analyzeProject } from "./analyzer.js";
+export { analyzeProject, AnalyzerSession, createAnalyzerSession } from "./analyzer.js";
 export { analyzeGitRef } from "./git.js";
 export { diffSnapshots, loadSnapshot, SnapshotComparisonError } from "./diff.js";
 export { renderModuleGraphDot } from "./graph.js";
@@ -22,12 +22,15 @@ export { architectureSnapshotSchema } from "./ir-schema.js";
 export { boundaryZoneSchema, inspectorConfigSchema, moduleIdStrategySchema } from "./config-schema.js";
 export type { BoundaryZone } from "./config-schema.js";
 export { BUILTIN_RULE_PACK, BUILTIN_RULES, createRuleContext, createRuleRegistry, evaluateRules } from "./rules.js";
+export { findingKey } from "./finding-identity.js";
+export { BUILTIN_FAIL_ON_CODES, isKnownFailOnSelector, matchesFailOn, normalizeFailOnSelector } from "./fail-on.js";
 export {
   ruleFlagSchema,
   rulePackListSchema,
   rulePackSchema,
   ruleSpecListSchema,
   ruleSpecSchema,
+  ruleFieldsBySource,
   ruleSourceSchema,
 } from "./rule-schema.js";
 

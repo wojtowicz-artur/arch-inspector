@@ -3,7 +3,7 @@ import fs from "node:fs";
 import path from "node:path";
 import { performance } from "node:perf_hooks";
 import { fileURLToPath } from "node:url";
-import { analyzeProject } from "../dist/src/analyzer.js";
+import { createAnalyzerSession } from "../dist/src/analyzer.js";
 
 const repositoryRoot = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..");
 const corpusRoot = path.join(repositoryRoot, "benchmark", "corpus");
@@ -79,12 +79,16 @@ function runCase(entry, options) {
   if (!fs.existsSync(path.join(projectPath, "tsconfig.json"))) {
     throw new Error(`${entry.name}: missing tsconfig.json.`);
   }
-  let reference;
-  for (let index = 0; index < options.warmup; index += 1) reference = analyzeProject(projectPath);
+  const session = createAnalyzerSession();
+  const coldStart = performance.now();
+  let reference = session.analyze(projectPath);
+  const coldMs = performance.now() - coldStart;
+  assertCorpusInvariants(entry, reference);
+  for (let index = 0; index < options.warmup; index += 1) reference = session.analyze(projectPath);
   const durations = [];
   for (let index = 0; index < options.iterations; index += 1) {
     const start = performance.now();
-    const snapshot = analyzeProject(projectPath);
+    const snapshot = session.analyze(projectPath);
     durations.push(performance.now() - start);
     assertCorpusInvariants(entry, snapshot);
     if (reference && JSON.stringify(reference) !== JSON.stringify(snapshot)) {
@@ -104,6 +108,7 @@ function runCase(entry, options) {
     semanticEdges: reference.source.imports.filter((edge) => (edge.symbols?.length ?? 0) > 0).length,
     findings: reference.analysis.findings.length,
     snapshotId: reference.receipt.snapshotId,
+    coldMs: Number(coldMs.toFixed(3)),
     medianMs: Number(median(durations).toFixed(3)),
     p95Ms: Number(percentile(durations, 0.95).toFixed(3)),
   };
@@ -114,14 +119,15 @@ function renderText(result, options) {
   for (const entry of result.cases) {
     lines.push(
       `${entry.name}: ${entry.sourceFiles} files, ${entry.imports} imports, ${entry.modules} modules` +
-        `, ${entry.medianMs} ms median, ${entry.p95Ms} ms p95` +
+        `, ${entry.coldMs} ms cold, ${entry.medianMs} ms warm median, ${entry.p95Ms} ms warm p95` +
         (entry.typeAware ? " [type-aware]" : ""),
     );
   }
   for (const comparison of result.comparisons) {
     lines.push(
       `type-aware overhead (${comparison.group}): ${comparison.baseline} → ${comparison.typeAware}` +
-        ` ms median (${comparison.deltaMs} ms, ${comparison.ratio}x)`,
+        ` ms warm median (${comparison.deltaMs} ms, ${comparison.ratio}x); cold ${comparison.coldBaseline} → ${comparison.coldTypeAware}` +
+        ` ms (${comparison.coldDeltaMs} ms, ${comparison.coldRatio}x)`,
     );
   }
   return `${lines.join("\n")}\n`;
@@ -137,6 +143,7 @@ function main() {
     const typeAware = cases.find((entry) => entry.comparison === group && entry.typeAware);
     if (!baseline || !typeAware) return [];
     const deltaMs = Number((typeAware.medianMs - baseline.medianMs).toFixed(3));
+    const coldDeltaMs = Number((typeAware.coldMs - baseline.coldMs).toFixed(3));
     return [
       {
         group,
@@ -144,6 +151,10 @@ function main() {
         typeAware: typeAware.medianMs,
         deltaMs,
         ratio: baseline.medianMs === 0 ? null : Number((typeAware.medianMs / baseline.medianMs).toFixed(3)),
+        coldBaseline: baseline.coldMs,
+        coldTypeAware: typeAware.coldMs,
+        coldDeltaMs,
+        coldRatio: baseline.coldMs === 0 ? null : Number((typeAware.coldMs / baseline.coldMs).toFixed(3)),
       },
     ];
   });

@@ -16,6 +16,7 @@ import {
   type RulePack,
   type RuleSource,
 } from "./rule-schema.js";
+import { validateRuleSemantics } from "./rule-validation.js";
 import { compare } from "./stable.js";
 
 /** A normalized fact collection which can be consumed by a rule specification. */
@@ -185,7 +186,7 @@ export const BUILTIN_RULES: readonly RuleSpec[] = [
     finding: {
       category: "violation",
       level: "error",
-      message: "${fromModule} is not allowed to depend on ${toModule}.",
+      message: "${forbiddenMessage}",
       file: field("fromFile"),
       line: field("line"),
       data: { from: field("fromModule"), to: field("toModule") },
@@ -236,6 +237,7 @@ export function createRuleRegistry(packs: readonly RulePack[]): RuleRegistry {
     seenPackIds.add(pack.id);
     const declaredFacts = new Set(pack.requiredFacts);
     for (const rule of pack.rules) {
+      validateRuleSemantics(rule);
       if (!declaredFacts.has(rule.source)) {
         throw new Error(`Rule pack '${pack.id}' does not declare required fact '${rule.source}'.`);
       }
@@ -369,6 +371,7 @@ function importRecords(input: RuleInput): RuleRecord[] {
         line: edge.location.line,
         resolution: edge.resolution,
         resolutionConfidence: edge.resolutionConfidence,
+        isProjectAlias: edge.isProjectAlias === true,
         importKind: edge.importKind,
         typeOnly: edge.typeOnly,
         symbols: edge.symbols?.map((symbol) => symbol.name),
@@ -379,7 +382,8 @@ function importRecords(input: RuleInput): RuleRecord[] {
         isInternal,
         isCrossModule,
         isPublicApi,
-        isUnresolvedInternal: edge.resolution === "unresolved" && isRelativeLike(edge.specifier),
+        isUnresolvedInternal:
+          edge.resolution === "unresolved" && (isRelativeLike(edge.specifier) || edge.isProjectAlias === true),
         isOutOfScope: edge.resolution === "out-of-scope",
         isDynamic: edge.importKind === "dynamic" || edge.importKind === "require",
         isBoundaryViolation: boundary !== undefined,
@@ -399,7 +403,19 @@ function forbiddenDependencyRecords(input: RuleInput, imports: readonly RuleReco
     const toModule = record.data.toModule;
     if (record.data.isInternal !== true || typeof fromModule !== "string" || typeof toModule !== "string") return [];
     const matchingRules = rules.filter((rule) => rule.from === fromModule && rule.to === toModule);
-    return matchingRules.map(() => record);
+    return matchingRules.map((rule, index) => ({
+      ...record,
+      // A single source edge may match several policy entries. Keep those
+      // findings distinct even when their rendered messages happen to agree.
+      derivedFrom: [...(record.derivedFrom ?? []), `forbidden-dependency-rule:${index}`],
+      data: {
+        ...record.data,
+        forbiddenMessage: renderMessage(
+          rule.message ?? `${String(fromModule)} is not allowed to depend on ${String(toModule)}.`,
+          record,
+        ),
+      },
+    }));
   });
 }
 
@@ -411,7 +427,7 @@ function moduleRecords(modules: ArchitectureModule[]): RuleRecord[] {
       hasPeers: modules.length > 1,
       related: [module.id],
     },
-    evidence: [{ kind: "module" as const, id: module.id }],
+    evidence: [{ kind: "module" as const, id: module.stableId ?? module.root ?? module.id }],
   }));
 }
 
@@ -433,7 +449,7 @@ export function createRuleContext(input: RuleInput): RuleContext {
   };
 }
 
-function isFieldRef(value: RuleValue): value is RuleFieldRef {
+function isFieldRef(value: RuleValue | undefined): value is RuleFieldRef {
   return typeof value === "object" && value !== null && "field" in value;
 }
 
@@ -552,33 +568,6 @@ export function evaluateRules(input: RuleInput, selection?: RuleRegistry | reado
   );
 }
 
-export function findingKey(finding: ArchitectureFinding): string {
-  return [
-    finding.code,
-    finding.category,
-    finding.file ?? "",
-    finding.line ?? 0,
-    finding.message,
-    ...(finding.provenance.derivedFrom ?? []),
-  ].join("\0");
-}
+export { findingKey } from "./finding-identity.js";
 
-const FAIL_ON_ALIASES: Readonly<Record<string, string>> = {
-  cycles: "architecture/cycle",
-  cycle: "architecture/cycle",
-  "deep-imports": "architecture/deep-import",
-  "deep-import": "architecture/deep-import",
-  "forbidden-dependencies": "architecture/forbidden-dependency",
-  "forbidden-dependency": "architecture/forbidden-dependency",
-};
-
-/** Return true only when an explicit check policy selects this finding. */
-export function matchesFailOn(finding: ArchitectureFinding, failOn: string[]): boolean {
-  if (failOn.length === 0) return false;
-  if (failOn.includes("all")) return finding.category === "violation";
-  if (failOn.includes("violations") && finding.category === "violation") return true;
-  return failOn.some((selector) => {
-    const normalized = FAIL_ON_ALIASES[selector] ?? selector;
-    return normalized === finding.code || normalized === finding.code.replace("architecture/", "");
-  });
-}
+export { matchesFailOn } from "./fail-on.js";

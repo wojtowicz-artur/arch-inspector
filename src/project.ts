@@ -13,6 +13,12 @@ export interface DiscoveredProject {
   compilerOptions: ts.CompilerOptions;
   /** Compiler options selected for the tsconfig that owns each source file. */
   compilerOptionsByFile: ReadonlyMap<string, ts.CompilerOptions>;
+  /** Compiler options for every discovered project reference, keyed by tsconfig. */
+  compilerOptionsByConfig: ReadonlyMap<string, ts.CompilerOptions>;
+  /** Owning tsconfig for every source file before analysis filtering. */
+  tsconfigPathByFile: ReadonlyMap<string, string>;
+  /** Filtered source files grouped by their owning tsconfig. */
+  filesByConfig: ReadonlyMap<string, readonly string[]>;
   files: string[];
   /** Source text cache shared by extraction, metrics and receipt hashing. */
   fileContents: ReadonlyMap<string, string>;
@@ -49,6 +55,21 @@ function commonDirectory(files: string[]): string {
     length += 1;
   }
   return first.slice(0, length).join(path.sep) || path.parse(files[0]).root;
+}
+
+function sourceRootFor(root: string, files: string[], compilerOptions: ts.CompilerOptions): string {
+  const configuredRoot = compilerOptions.rootDir ? normalize(compilerOptions.rootDir) : undefined;
+
+  // A rootDir of `.` describes the emit boundary, not the source layout. Keep
+  // module discovery useful for the conventional `src/...` layout instead of
+  // looking only for `<project>/modules`.
+  if (configuredRoot && configuredRoot !== normalize(root)) return configuredRoot;
+
+  const srcRoot = normalize(path.join(root, "src"));
+  if (files.some((file) => isWithin(srcRoot, file))) return srcRoot;
+
+  if (configuredRoot) return configuredRoot;
+  return normalize(files.length > 0 ? commonDirectory(files) : root);
 }
 
 function readInspectorConfig(root: string): InspectorConfig {
@@ -133,6 +154,9 @@ export function discoverProject(inputPath = "."): DiscoveredProject {
   const visited = new Set<string>();
   const referencedFiles: string[] = [];
   const compilerOptionsByFile = new Map<string, ts.CompilerOptions>();
+  const compilerOptionsByConfig = new Map<string, ts.CompilerOptions>();
+  const tsconfigPathByFile = new Map<string, string>();
+  const filesByConfig = new Map<string, string[]>();
   let compilerOptions: ts.CompilerOptions = {};
 
   const readConfig = (configPath: string): void => {
@@ -150,14 +174,24 @@ export function discoverProject(inputPath = "."): DiscoveredProject {
         parsed.errors.map((diagnostic) => ts.flattenDiagnosticMessageText(diagnostic.messageText, "\n")).join("\n"),
       );
     }
+    compilerOptionsByConfig.set(normalizedConfig, parsed.options);
     const sourceFiles = parsed.fileNames.filter(isSourceFile).map(normalize);
     referencedFiles.push(...sourceFiles);
+    const configFiles = filesByConfig.get(normalizedConfig) ?? [];
+    configFiles.push(...sourceFiles);
+    filesByConfig.set(normalizedConfig, configFiles);
     for (const file of sourceFiles) {
       // The root config wins if a referenced project accidentally includes the
       // same file as well. This keeps the owning project deterministic.
-      if (!compilerOptionsByFile.has(file)) compilerOptionsByFile.set(file, parsed.options);
+      if (!compilerOptionsByFile.has(file)) {
+        compilerOptionsByFile.set(file, parsed.options);
+        tsconfigPathByFile.set(file, normalizedConfig);
+      }
     }
-    compilerOptions = { ...compilerOptions, ...parsed.options };
+    // Keep the root project's compiler context as the project default. A
+    // referenced tsconfig must not overwrite it merely because it is visited
+    // later in the graph.
+    if (normalizedConfig === normalize(tsconfigPath)) compilerOptions = parsed.options;
     const references = Array.isArray(read.config?.references) ? read.config.references : [];
     for (const reference of references) {
       if (!reference || typeof reference.path !== "string") continue;
@@ -165,25 +199,30 @@ export function discoverProject(inputPath = "."): DiscoveredProject {
       const referenceConfig =
         fs.existsSync(referencePath) && fs.statSync(referencePath).isDirectory()
           ? path.join(referencePath, "tsconfig.json")
-          : referencePath.endsWith(".json")
+          : fs.existsSync(referencePath) && fs.statSync(referencePath).isFile()
             ? referencePath
-            : `${referencePath}.json`;
-      if (fs.existsSync(referenceConfig)) readConfig(referenceConfig);
+            : referencePath.endsWith(".json")
+              ? referencePath
+              : `${referencePath}.json`;
+      if (!fs.existsSync(referenceConfig)) {
+        throw new Error(`Referenced tsconfig does not exist: ${relativeToRoot(root, referenceConfig)}`);
+      }
+      readConfig(referenceConfig);
     }
   };
 
   readConfig(tsconfigPath);
   const files = filterProjectFiles(root, [...new Set(referencedFiles)].sort(), config);
+  const includedFiles = new Set(files);
+  const filteredFilesByConfig = new Map<string, readonly string[]>();
+  for (const [configPath, configFiles] of filesByConfig) {
+    const owned = [...new Set(configFiles)]
+      .filter((file) => includedFiles.has(file) && tsconfigPathByFile.get(file) === configPath)
+      .sort();
+    if (owned.length > 0) filteredFilesByConfig.set(configPath, owned);
+  }
   const fileContents = new Map(files.map((file) => [file, ts.sys.readFile(file) ?? ""]));
-  const sourceRoot = normalize(
-    compilerOptions.rootDir ??
-      path.join(
-        root,
-        files.some((file) => file.includes(`${path.sep}src${path.sep}`))
-          ? "src"
-          : path.relative(root, commonDirectory(files)),
-      ),
-  );
+  const sourceRoot = sourceRootFor(root, files, compilerOptions);
 
   return {
     root: normalize(root),
@@ -191,6 +230,9 @@ export function discoverProject(inputPath = "."): DiscoveredProject {
     sourceRoot,
     compilerOptions,
     compilerOptionsByFile,
+    compilerOptionsByConfig,
+    tsconfigPathByFile,
+    filesByConfig: filteredFilesByConfig,
     files,
     fileContents,
     resolutionCache: new Map(),
@@ -209,15 +251,27 @@ export function isWithin(parent: string, file: string): boolean {
 }
 
 export function resolveConfiguredModuleRoots(project: DiscoveredProject): string[] {
-  const configured = project.config.moduleRoots?.map((root) => normalize(path.join(project.root, root))) ?? [];
-  if (configured.length > 0) return configured.filter((root) => fs.existsSync(root));
+  const configured = project.config.moduleRoots?.map((root) => normalize(path.resolve(project.root, root))) ?? [];
+  if (configured.length > 0) {
+    for (const moduleRoot of configured) {
+      if (!fs.existsSync(moduleRoot) || !fs.statSync(moduleRoot).isDirectory()) {
+        throw new Error(
+          `Configured module root does not exist or is not a directory: ${relativeToRoot(project.root, moduleRoot)}`,
+        );
+      }
+    }
+    return [...new Set(configured)];
+  }
 
-  const candidates = [
-    path.join(project.sourceRoot, "modules"),
-    path.join(project.sourceRoot, "features"),
-    path.join(project.sourceRoot, "app"),
-    path.join(project.sourceRoot, "shared"),
-  ];
-  const existing = candidates.filter((candidate) => fs.existsSync(candidate));
+  // Search conventional module folders relative to both the selected source
+  // root and the project root. This keeps discovery independent from an emit
+  // rootDir such as `.` and still supports projects without a src directory.
+  const searchRoots = [...new Set([project.sourceRoot, project.root, path.join(project.root, "src")])];
+  const candidates = searchRoots.flatMap((searchRoot) =>
+    ["modules", "features", "app", "shared"].map((name) => path.join(searchRoot, name)),
+  );
+  const existing = [...new Set(candidates)].filter(
+    (candidate) => fs.existsSync(candidate) && fs.statSync(candidate).isDirectory(),
+  );
   return existing.length > 0 ? existing : [project.sourceRoot];
 }

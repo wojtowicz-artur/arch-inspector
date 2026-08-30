@@ -65,6 +65,8 @@ export interface SourceImport {
   resolution: Resolution;
   /** Whether the resolver proved the target or the classification is heuristic. */
   resolutionConfidence?: ResolutionConfidence;
+  /** Whether the specifier matched a compilerOptions.paths project alias. */
+  isProjectAlias?: boolean;
   typeOnly: boolean;
   /** Optional TypeScript checker evidence for statically imported exports. */
   symbols?: Array<{

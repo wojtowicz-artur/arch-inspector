@@ -1,4 +1,4 @@
-import { collectEdges } from "./imports.js";
+import { collectEdges, type ModuleResolutionCache, type SourceAstCache } from "./imports.js";
 import {
   IR_VERSION,
   TOOL_VERSION,
@@ -13,7 +13,7 @@ import { inferModules } from "./modules.js";
 import { discoverProject, relativeToRoot, type DiscoveredProject } from "./project.js";
 import { evaluateRules } from "./rules.js";
 import { canonicalStringify, sha256 } from "./stable.js";
-import { buildTypeAwareImportIndex } from "./type-aware.js";
+import { buildTypeAwareImportIndex, type TypeAwareImportIndex } from "./type-aware.js";
 
 function languageFor(file: string): "typescript" | "javascript" {
   return /\.(?:jsx?|mjs|cjs)$/i.test(file) ? "javascript" : "typescript";
@@ -99,7 +99,7 @@ function createReceipt(
     configHash: sha256(project.config),
     compilerOptionsHash: sha256({
       default: project.compilerOptions,
-      configurations: [...new Set([...project.compilerOptionsByFile.values()].map(canonicalStringify))].sort(),
+      configurations: [...new Set([...project.compilerOptionsByConfig.values()].map(canonicalStringify))].sort(),
     }),
     inputHash: inputHash(project),
   };
@@ -109,15 +109,46 @@ function createReceipt(
   };
 }
 
-export function analyzeProject(inputPath = "."): ArchitectureSnapshot {
-  const project = discoverProject(inputPath);
+function projectSignature(project: DiscoveredProject): string {
+  return sha256({
+    root: project.root,
+    tsconfigPath: project.tsconfigPath,
+    sourceRoot: project.sourceRoot,
+    config: project.config,
+    files: project.files.map((file) => ({
+      path: relativeToRoot(project.root, file),
+      content: project.fileContents.get(file) ?? "",
+    })),
+    compilerOptions: project.compilerOptions,
+    compilerOptionsByConfig: [...project.compilerOptionsByConfig.entries()]
+      .map(([configPath, options]) => [relativeToRoot(project.root, configPath), options] as const)
+      .sort(([left], [right]) => left.localeCompare(right)),
+    tsconfigPathByFile: [...project.tsconfigPathByFile.entries()]
+      .map(
+        ([file, configPath]) => [relativeToRoot(project.root, file), relativeToRoot(project.root, configPath)] as const,
+      )
+      .sort(([left], [right]) => left.localeCompare(right)),
+    filesByConfig: [...project.filesByConfig.entries()]
+      .map(
+        ([configPath, files]) =>
+          [relativeToRoot(project.root, configPath), files.map((file) => relativeToRoot(project.root, file))] as const,
+      )
+      .sort(([left], [right]) => left.localeCompare(right)),
+  });
+}
+
+function analyzeDiscoveredProject(
+  project: DiscoveredProject,
+  typeAware: TypeAwareImportIndex | undefined,
+  sourceAstCache: SourceAstCache,
+  resolutionCache: ModuleResolutionCache,
+): ArchitectureSnapshot {
   const inferred = inferModules(project);
   const relativeFileToModule = new Map(
     [...inferred.fileToModule.entries()].map(([file, module]) => [relativeToRoot(project.root, file), module]),
   );
   const moduleEntrypoints = new Map(inferred.modules.map((module) => [module.id, new Set(module.entrypoints)]));
-  const typeAware = project.config.typeAware ? buildTypeAwareImportIndex(project) : undefined;
-  const imports = collectEdges(project, typeAware);
+  const imports = collectEdges(project, typeAware, sourceAstCache, resolutionCache);
   const moduleEdges = buildModuleEdges(imports, relativeFileToModule, moduleEntrypoints);
   const cycles = findCycles(inferred.modules, moduleEdges);
   const findings: ArchitectureFinding[] = evaluateRules({
@@ -180,4 +211,55 @@ export function analyzeProject(inputPath = "."): ArchitectureSnapshot {
     { ...base, receipt: createReceipt(base, project) },
     "Generated architecture snapshot",
   );
+}
+
+interface SessionEntry {
+  signature: string;
+  project: DiscoveredProject;
+  sourceAstCache: SourceAstCache;
+  resolutionCache: ModuleResolutionCache;
+  typeAware?: TypeAwareImportIndex;
+}
+
+/**
+ * Reusable analysis context. Discovery still runs on every call so file and
+ * config changes are visible, while unchanged projects reuse parsed ASTs and
+ * the optional TypeScript checker index.
+ */
+export class AnalyzerSession {
+  private readonly entries = new Map<string, SessionEntry>();
+
+  analyze(inputPath = "."): ArchitectureSnapshot {
+    const discovered = discoverProject(inputPath);
+    const key = discovered.root;
+    const signature = projectSignature(discovered);
+    const previous = this.entries.get(key);
+    const entry =
+      previous?.signature === signature
+        ? previous
+        : {
+            signature,
+            project: discovered,
+            sourceAstCache: new Map<string, import("typescript").SourceFile>(),
+            resolutionCache: new Map(),
+            typeAware: discovered.config.typeAware ? buildTypeAwareImportIndex(discovered) : undefined,
+          };
+    this.entries.delete(key);
+    this.entries.set(key, entry);
+    // Keep long-lived editor/CI sessions bounded when they visit many roots.
+    while (this.entries.size > 8) {
+      const oldest = this.entries.keys().next().value;
+      if (oldest === undefined) break;
+      this.entries.delete(oldest);
+    }
+    return analyzeDiscoveredProject(entry.project, entry.typeAware, entry.sourceAstCache, entry.resolutionCache);
+  }
+}
+
+export function createAnalyzerSession(): AnalyzerSession {
+  return new AnalyzerSession();
+}
+
+export function analyzeProject(inputPath = "."): ArchitectureSnapshot {
+  return createAnalyzerSession().analyze(inputPath);
 }

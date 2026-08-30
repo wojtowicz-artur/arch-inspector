@@ -22,6 +22,42 @@ interface ExplicitModule {
   publicEntrypoints?: string[];
 }
 
+const SOURCE_EXTENSIONS = /\.(?:tsx?|mts|cts|jsx?|mjs|cjs)$/i;
+
+function isIndexFile(file: string): boolean {
+  return path.basename(file).replace(SOURCE_EXTENSIONS, "") === "index";
+}
+
+function isDirectEntrypoint(moduleRoot: string, file: string): boolean {
+  const relative = path.relative(moduleRoot, file);
+  return !relative.startsWith(`..${path.sep}`) && relative !== ".." && relative.split(path.sep).length === 1;
+}
+
+function validateConfiguredEntrypoints(
+  project: DiscoveredProject,
+  moduleId: string,
+  moduleRoot: string,
+  files: string[],
+  values: string[] | undefined,
+): string[] | undefined {
+  if (values === undefined) return undefined;
+  const projectFiles = new Set(files.map((file) => path.normalize(file)));
+  const seen = new Set<string>();
+  return values.map((value) => {
+    const absolute = path.normalize(path.resolve(project.root, value));
+    const relative = relativeToRoot(project.root, absolute);
+    if (!isWithin(moduleRoot, absolute)) {
+      throw new Error(`Public entrypoint '${relative}' for module '${moduleId}' is outside its module root.`);
+    }
+    if (!projectFiles.has(absolute)) {
+      throw new Error(`Public entrypoint '${relative}' for module '${moduleId}' is not in the analysis scope.`);
+    }
+    if (seen.has(relative)) throw new Error(`Duplicate public entrypoint '${relative}' for module '${moduleId}'.`);
+    seen.add(relative);
+    return relative;
+  });
+}
+
 function childName(root: string, file: string): string | undefined {
   const relative = path.relative(root, file);
   if (relative.startsWith(`..${path.sep}`) || relative === ".." || relative === "") return undefined;
@@ -104,6 +140,16 @@ export function inferModules(project: DiscoveredProject): {
       ...(declaration.publicEntrypoints ? { publicEntrypoints: declaration.publicEntrypoints } : {}),
     }))
     .sort((a, b) => b.root.length - a.root.length || a.id.localeCompare(b.id));
+  for (const module of explicitModules) {
+    if (!fs.existsSync(module.root) || !fs.statSync(module.root).isDirectory()) {
+      throw new Error(
+        `Configured module '${module.id}' root does not exist or is not a directory: ${relativeToRoot(project.root, module.root)}`,
+      );
+    }
+    if (!project.files.some((file) => isWithin(module.root, file))) {
+      throw new Error(`Configured module '${module.id}' has no files in the analysis scope.`);
+    }
+  }
   const candidatesByRoot = new Map<string, ModuleCandidate>();
 
   for (const file of project.files) {
@@ -150,13 +196,19 @@ export function inferModules(project: DiscoveredProject): {
     const files = project.files.filter((file) => fileToModule.get(file) === id);
     const assignment = assignments.find((candidate) => candidate.id === id);
     const inferredEntrypoints = files
-      .filter((file) => path.basename(file).replace(/\.(?:tsx?|mts|cts|jsx?|mjs|cjs)$/i, "") === "index")
+      // Only the barrel directly under the module root is public by
+      // convention. `internal/index.ts` is an implementation detail unless
+      // it is explicitly listed in arch.config.json.
+      .filter((file) => isIndexFile(file) && isDirectEntrypoint(root, path.normalize(path.resolve(project.root, file))))
       .map((file) => relativeToRoot(project.root, file))
       .sort();
-    const configuredEntrypoints = (assignment?.publicEntrypoints ?? project.config.publicEntrypoints?.[id])
-      ?.map((file) => relativeToRoot(project.root, path.resolve(project.root, file)))
-      .filter((file) => files.some((candidate) => relativeToRoot(project.root, candidate) === file))
-      .sort();
+    const configuredEntrypoints = validateConfiguredEntrypoints(
+      project,
+      id,
+      path.normalize(path.resolve(project.root, root)),
+      files.map((file) => path.normalize(path.resolve(project.root, file))),
+      assignment?.publicEntrypoints ?? project.config.publicEntrypoints?.[id],
+    )?.sort();
     return {
       id,
       // `id` is intentionally kept as the human-facing/policy name for IR
@@ -181,6 +233,27 @@ export function inferModules(project: DiscoveredProject): {
       },
     };
   });
+
+  const assignmentIds = new Set(assignments.map((assignment) => assignment.id));
+  for (const [id, values] of Object.entries(project.config.publicEntrypoints ?? {})) {
+    if (!assignmentIds.has(id)) throw new Error(`Public entrypoints refer to unknown module '${id}'.`);
+    // Validate map entries even when the module projection above has no
+    // matching configured declaration; otherwise a typo would silently remove
+    // the requested public API.
+    const assignment = assignments.find((candidate) => candidate.id === id)!;
+    const files = project.files.filter((file) => fileToModule.get(file) === id);
+    validateConfiguredEntrypoints(project, id, assignment.root, files, values);
+  }
+
+  const moduleIds = new Set(modules.map((module) => module.id));
+  for (const dependency of project.config.forbiddenDependencies ?? []) {
+    if (!moduleIds.has(dependency.from)) {
+      throw new Error(`Forbidden dependency refers to unknown source module '${dependency.from}'.`);
+    }
+    if (!moduleIds.has(dependency.to)) {
+      throw new Error(`Forbidden dependency refers to unknown target module '${dependency.to}'.`);
+    }
+  }
 
   // A module with one file in a root can still have its root inferred from that file.
   for (const module of modules) {
