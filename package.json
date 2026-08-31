@@ -1,7 +1,8 @@
 {
   "name": "arch-inspector",
-  "version": "0.5.0",
+  "version": "0.6.0",
   "private": true,
+  "workspaces": ["packages/contracts"],
   "type": "module",
   "description": "A small, deterministic TypeScript architecture inspector.",
   "main": "./dist/src/index.js",
@@ -17,15 +18,15 @@
     "arch": "./dist/src/cli.js"
   },
   "scripts": {
-    "build": "tsc -p tsconfig.json",
+    "build": "npm run build --workspace=@arch-inspector/contracts && tsc -p tsconfig.json",
     "test": "npm run build && node --test dist/test/*.test.js",
     "inspect": "npm run build && node dist/src/cli.js inspect",
     "check": "npm run build && node dist/src/cli.js check",
     "benchmark": "npm run build && node scripts/benchmark.mjs",
-    "format": "oxfmt src test scripts",
-    "format:check": "oxfmt --check src test scripts",
-    "lint": "oxlint src test scripts",
-    "lint:fix": "oxlint --fix src test scripts",
+    "format": "oxfmt src test scripts packages/contracts/src",
+    "format:check": "oxfmt --check src test scripts packages/contracts/src",
+    "lint": "oxlint src test scripts packages/contracts/src",
+    "lint:fix": "oxlint --fix src test scripts packages/contracts/src",
     "quality": "npm run format:check && npm run lint && npm test"
   },
   "dependencies": {

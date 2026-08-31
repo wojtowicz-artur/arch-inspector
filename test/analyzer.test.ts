@@ -19,7 +19,7 @@ test("builds a deterministic architecture snapshot from a TypeScript project", (
     const second = analyzeProject(project.root);
 
     assert.equal(JSON.stringify(first), JSON.stringify(second));
-    assert.equal(first.irVersion, "0.5");
+    assert.equal(first.irVersion, "0.6");
     assert.deepEqual(
       first.architecture.modules.map((module) => module.id),
       ["admin", "booking", "calendar", "shared"],
@@ -36,7 +36,7 @@ test("builds a deterministic architecture snapshot from a TypeScript project", (
     assert.equal(first.receipt.pipelineHash.length, 64);
     assert.deepEqual(
       first.receipt.pipeline.providers.map((component) => component.id),
-      ["architecture/module-inference", "typescript/source-files", "typescript/imports"],
+      ["architecture/declarations", "typescript/source-files", "typescript/imports"],
     );
   } finally {
     project.cleanup();

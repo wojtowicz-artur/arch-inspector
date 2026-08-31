@@ -1,9 +1,13 @@
 import type {
   ArchitectureCycle,
+  ArchitectureContract,
+  ArchitectureDeclaredDependency,
   ArchitectureFinding,
+  ArchitectureInteraction,
   ArchitectureModule,
   DiagnosticCategory,
   DiagnosticLevel,
+  DependencyConformance,
   EvidenceRef,
   ModuleEdge,
   SourceImport,
@@ -42,6 +46,11 @@ export interface RuleInput {
   fileToModule: Map<string, string>;
   moduleEntrypoints: Map<string, Set<string>>;
   cycles: ArchitectureCycle[];
+  declaredCycles?: ArchitectureCycle[];
+  declaredDependencies?: ArchitectureDeclaredDependency[];
+  contracts?: ArchitectureContract[];
+  interactions?: ArchitectureInteraction[];
+  dependencyConformance?: DependencyConformance[];
 }
 
 export interface RuleFieldRef {
@@ -100,6 +109,34 @@ export const BUILTIN_RULES: readonly RuleSpec[] = [
       message: "Module dependency strongly-connected component: ${modules}.",
       related: field("modules"),
       data: { modules: field("modules"), edgeIds: field("edgeIds") },
+    },
+  },
+  {
+    code: "architecture/declared-cycle",
+    source: "declaredCycles",
+    enabledBy: "noCycles",
+    finding: {
+      category: "violation",
+      level: "error",
+      message: "Declared module dependency strongly-connected component: ${modules}.",
+      related: field("modules"),
+      data: { modules: field("modules"), edgeIds: field("edgeIds") },
+    },
+  },
+  {
+    code: "architecture/undeclared-dependency",
+    source: "dependencyConformance",
+    where: [{ field: "status", operator: "eq", value: "observed-only" }],
+    finding: {
+      category: "violation",
+      level: "error",
+      message: "Module '${from}' depends on '${to}' without a declaration.",
+      data: {
+        from: field("from"),
+        to: field("to"),
+        status: field("status"),
+        moduleEdgeIds: field("moduleEdgeIds"),
+      },
     },
   },
   {
@@ -213,8 +250,8 @@ export const BUILTIN_RULES: readonly RuleSpec[] = [
 
 export const BUILTIN_RULE_PACK: RulePack = {
   id: "arch-inspector/core",
-  version: "0.5.0",
-  requiredFacts: ["cycles", "imports", "forbiddenDependencies", "modules"],
+  version: "0.6.0",
+  requiredFacts: ["cycles", "declaredCycles", "dependencyConformance", "imports", "forbiddenDependencies", "modules"],
   rules: [...BUILTIN_RULES],
 };
 
@@ -345,6 +382,7 @@ function cycleIdentity(
   cycle: ArchitectureCycle,
   modules: readonly ArchitectureModule[],
   moduleEdges: readonly ModuleEdge[],
+  declared = false,
 ): {
   derivedFrom: string[];
   evidence: EvidenceRef[];
@@ -373,7 +411,9 @@ function cycleIdentity(
       evidence:
         sourceEdgeIds.length > 0
           ? sourceEdgeIds.map((id) => ({ kind: "source-edge" as const, id }))
-          : stableModules.map((id) => ({ kind: "module" as const, id })),
+          : declared && cycle.edgeIds.length > 0
+            ? cycle.edgeIds.map((id) => ({ kind: "declared-dependency" as const, id }))
+            : stableModules.map((id) => ({ kind: "module" as const, id })),
     };
   }
 
@@ -393,9 +433,10 @@ function cycleRecords(
   cycles: ArchitectureCycle[],
   modules: readonly ArchitectureModule[],
   moduleEdges: readonly ModuleEdge[] = [],
+  declared = false,
 ): RuleRecord[] {
   return cycles.map((cycle) => {
-    const identity = cycleIdentity(cycle, modules, moduleEdges);
+    const identity = cycleIdentity(cycle, modules, moduleEdges, declared);
     return {
       data: { id: cycle.id, modules: cycle.modules, edgeIds: cycle.edgeIds },
       ...identity,
@@ -405,62 +446,115 @@ function cycleRecords(
 
 function importRecords(input: RuleInput): RuleRecord[] {
   const modulesById = new Map(input.modules.map((module) => [module.id, module]));
-  return input.imports.map((edge) => {
-    const fromModule = input.fileToModule.get(edge.fromFile);
-    const toModule = edge.toFile ? input.fileToModule.get(edge.toFile) : undefined;
-    const isInternal = edge.resolution === "internal";
-    const isCrossModule = Boolean(fromModule && toModule && fromModule !== toModule);
-    const entrypoints = toModule ? input.moduleEntrypoints.get(toModule) : undefined;
-    const publicApiStatus =
-      !toModule || !entrypoints || entrypoints.size === 0
-        ? "unknown"
-        : entrypoints.has(edge.toFile ?? "")
-          ? "public"
-          : "deep";
-    const isPublicApi = publicApiStatus === "public";
-    const boundary = boundaryViolation(
-      modulesById.get(fromModule ?? ""),
-      modulesById.get(toModule ?? ""),
-      input.config.boundaryZones,
-    );
-    const boundaryMessage = boundary
-      ? (boundary.message ?? `${fromModule} is not allowed to depend on ${toModule} in boundary zone '${boundary.id}'.`)
-      : undefined;
-    return {
-      data: {
-        id: edge.id,
-        fromFile: edge.fromFile,
-        toFile: edge.toFile,
-        specifier: edge.specifier,
-        line: edge.location.line,
-        resolution: edge.resolution,
-        resolutionConfidence: edge.resolutionConfidence,
-        isProjectAlias: edge.isProjectAlias === true,
-        importKind: edge.importKind,
-        typeOnly: edge.typeOnly,
-        symbols: edge.symbols?.map((symbol) => symbol.name),
-        symbolKinds: edge.symbols?.map((symbol) => symbol.kind),
-        isProjectLike: edge.isProjectLike === true,
-        fromModule,
-        toModule,
-        target: edge.toFile ?? edge.specifier,
-        isInternal,
-        isCrossModule,
-        isPublicApi,
-        publicApiStatus,
-        isUnresolvedInternal:
-          edge.resolution === "unresolved" &&
-          (edge.isProjectLike === true || isRelativeLike(edge.specifier) || edge.isProjectAlias === true),
-        isOutOfScope: edge.resolution === "out-of-scope",
-        isDynamic: edge.importKind === "dynamic" || edge.importKind === "require",
-        isBoundaryViolation: boundary !== undefined,
-        boundaryZone: boundary?.id,
-        boundaryMessage,
-      },
-      derivedFrom: [edge.id],
-      evidence: evidenceForEdge(edge),
-    };
-  });
+  const observed = input.imports
+    .filter((edge) => edge.purpose !== "architecture-declaration")
+    .map((edge) => {
+      const fromModule = input.fileToModule.get(edge.fromFile);
+      const toModule = edge.toFile ? input.fileToModule.get(edge.toFile) : undefined;
+      const isInternal = edge.resolution === "internal";
+      const isCrossModule = Boolean(fromModule && toModule && fromModule !== toModule);
+      const entrypoints = toModule ? input.moduleEntrypoints.get(toModule) : undefined;
+      const publicApiStatus =
+        !toModule || !entrypoints || entrypoints.size === 0
+          ? "unknown"
+          : entrypoints.has(edge.toFile ?? "")
+            ? "public"
+            : "deep";
+      const isPublicApi = publicApiStatus === "public";
+      const boundary = boundaryViolation(
+        modulesById.get(fromModule ?? ""),
+        modulesById.get(toModule ?? ""),
+        input.config.boundaryZones,
+      );
+      const boundaryMessage = boundary
+        ? (boundary.message ??
+          `${fromModule} is not allowed to depend on ${toModule} in boundary zone '${boundary.id}'.`)
+        : undefined;
+      return {
+        data: {
+          id: edge.id,
+          fromFile: edge.fromFile,
+          toFile: edge.toFile,
+          specifier: edge.specifier,
+          line: edge.location.line,
+          purpose: edge.purpose,
+          resolution: edge.resolution,
+          resolutionConfidence: edge.resolutionConfidence,
+          isProjectAlias: edge.isProjectAlias === true,
+          importKind: edge.importKind,
+          typeOnly: edge.typeOnly,
+          symbols: edge.symbols?.map((symbol) => symbol.name),
+          symbolKinds: edge.symbols?.map((symbol) => symbol.kind),
+          isProjectLike: edge.isProjectLike === true,
+          fromModule,
+          toModule,
+          target: edge.toFile ?? edge.specifier,
+          isInternal,
+          isCrossModule,
+          isPublicApi,
+          publicApiStatus,
+          isUnresolvedInternal:
+            edge.resolution === "unresolved" &&
+            (edge.isProjectLike === true || isRelativeLike(edge.specifier) || edge.isProjectAlias === true),
+          isOutOfScope: edge.resolution === "out-of-scope",
+          isDynamic: edge.importKind === "dynamic" || edge.importKind === "require",
+          isBoundaryViolation: boundary !== undefined,
+          boundaryZone: boundary?.id,
+          boundaryMessage,
+          isDeclaredOnly: false,
+        },
+        derivedFrom: [edge.id],
+        evidence: evidenceForEdge(edge),
+      };
+    });
+  const conformanceByPair = new Map(
+    (input.dependencyConformance ?? []).map((entry) => [`${entry.from}\0${entry.to}`, entry.status] as const),
+  );
+  const declaredOnly = (input.declaredDependencies ?? [])
+    .filter((dependency) => conformanceByPair.get(`${dependency.from}\0${dependency.to}`) === "declared-only")
+    .map((dependency) => {
+      const fromModule = modulesById.get(dependency.from);
+      const toModule = modulesById.get(dependency.to);
+      const boundary = boundaryViolation(fromModule, toModule, input.config.boundaryZones);
+      const boundaryMessage = boundary
+        ? (boundary.message ??
+          `${dependency.from} is not allowed to depend on ${dependency.to} in boundary zone '${boundary.id}'.`)
+        : undefined;
+      return {
+        data: {
+          id: `declared:${dependency.id}`,
+          fromFile: dependency.file,
+          toFile: undefined,
+          specifier: dependency.contractId ?? dependency.kind,
+          line: dependency.line,
+          resolution: "internal",
+          resolutionConfidence: "exact",
+          isProjectAlias: false,
+          importKind: "static",
+          typeOnly: false,
+          isProjectLike: true,
+          fromModule: dependency.from,
+          toModule: dependency.to,
+          target: dependency.to,
+          isInternal: true,
+          isCrossModule: dependency.from !== dependency.to,
+          isPublicApi: false,
+          publicApiStatus: "unknown",
+          isUnresolvedInternal: false,
+          isOutOfScope: false,
+          isDynamic: false,
+          isBoundaryViolation: boundary !== undefined,
+          boundaryZone: boundary?.id,
+          boundaryMessage,
+          isDeclaredOnly: true,
+        },
+        derivedFrom: [dependency.id],
+        evidence: [
+          { kind: "declared-dependency" as const, id: dependency.id, file: dependency.file, line: dependency.line },
+        ],
+      } satisfies RuleRecord;
+    });
+  return [...observed, ...declaredOnly];
 }
 
 function forbiddenDependencyRecords(input: RuleInput, imports: readonly RuleRecord[]): RuleRecord[] {
@@ -498,6 +592,71 @@ function moduleRecords(modules: ArchitectureModule[]): RuleRecord[] {
   }));
 }
 
+function declaredDependencyRecords(dependencies: readonly ArchitectureDeclaredDependency[]): RuleRecord[] {
+  return dependencies.map((dependency) => ({
+    data: {
+      id: dependency.id,
+      from: dependency.from,
+      to: dependency.to,
+      kind: dependency.kind,
+      contractId: dependency.contractId,
+      file: dependency.file,
+      line: dependency.line,
+      isDeclaredOnly: true,
+    },
+    derivedFrom: [dependency.id],
+    evidence: [
+      { kind: "declared-dependency" as const, id: dependency.id, file: dependency.file, line: dependency.line },
+    ],
+  }));
+}
+
+function contractRecords(contracts: readonly ArchitectureContract[]): RuleRecord[] {
+  return contracts.map((contract) => ({
+    data: { id: contract.id, module: contract.module, key: contract.key, kind: contract.kind },
+    derivedFrom: [contract.id],
+    evidence: contract.provenance.evidence,
+  }));
+}
+
+function interactionRecords(interactions: readonly ArchitectureInteraction[]): RuleRecord[] {
+  return interactions.map((interaction) => ({
+    data: {
+      id: interaction.id,
+      kind: interaction.kind,
+      contractId: interaction.contractId,
+      from: interaction.from,
+      to: interaction.to,
+      file: interaction.file,
+      line: interaction.line,
+    },
+    derivedFrom: [interaction.id],
+    evidence: interaction.provenance.evidence,
+  }));
+}
+
+function dependencyConformanceRecords(
+  entries: readonly DependencyConformance[],
+  modules: readonly ArchitectureModule[],
+): RuleRecord[] {
+  const stableIds = new Map(modules.map((module) => [module.id, module.stableId ?? module.root ?? module.id] as const));
+  return entries.map((entry) => ({
+    data: {
+      id: entry.id,
+      from: entry.from,
+      to: entry.to,
+      status: entry.status,
+      declaredDependencyIds: entry.declaredDependencyIds,
+      moduleEdgeIds: entry.moduleEdgeIds,
+    },
+    // The conformance fact represents a module pair. Anchor findings to the
+    // physical roots so a display rename does not create a new violation;
+    // individual source/declaration ids remain evidence on the fact itself.
+    derivedFrom: [`${stableIds.get(entry.from) ?? entry.from}\0${stableIds.get(entry.to) ?? entry.to}`],
+    evidence: entry.provenance.evidence,
+  }));
+}
+
 /** Project source and architecture facts into collections shared by all rules. */
 export function createRuleContext(input: RuleInput): RuleContext {
   const imports = importRecords(input);
@@ -509,7 +668,12 @@ export function createRuleContext(input: RuleInput): RuleContext {
     },
     collections: {
       cycles: cycleRecords(input.cycles, input.modules, input.moduleEdges),
+      declaredCycles: cycleRecords(input.declaredCycles ?? [], input.modules, [], true),
       imports,
+      declaredDependencies: declaredDependencyRecords(input.declaredDependencies ?? []),
+      contracts: contractRecords(input.contracts ?? []),
+      interactions: interactionRecords(input.interactions ?? []),
+      dependencyConformance: dependencyConformanceRecords(input.dependencyConformance ?? [], input.modules),
       forbiddenDependencies: forbiddenDependencyRecords(input, imports),
       modules: moduleRecords(input.modules),
     },

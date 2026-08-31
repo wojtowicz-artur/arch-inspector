@@ -2,7 +2,7 @@
 
 Pierwszy eksperymentalny slice toolingu do obserwowania ewolucji architektury TypeScript.
 
-## MVP 0.5
+## MVP 0.6
 
 Inspector nie wymaga adnotacji w analizowanym kodzie. Czyta istniejące `tsconfig.json`, wykorzystuje TypeScript Compiler API do rozwiązywania importów i emituje deterministyczny Architecture IR:
 
@@ -27,15 +27,20 @@ Inspector nie wymaga adnotacji w analizowanym kodzie. Czyta istniejące `tsconfi
 Snapshot ma trzy warstwy:
 
 - `source.files` i `source.imports` — fakty zaobserwowane w plikach i resolverze;
+- importy wychodzące z `module.arch.ts` zachowują `purpose: "architecture-declaration"`
+  i nie są implementacyjnymi krawędziami modułów;
 - `architecture.modules`, `architecture.ownership` i `architecture.moduleEdges` — projekcja granic modułów;
-- `analysis.cycles`, `analysis.metrics` i `analysis.findings` — wyniki algorytmów i reguł.
+- `architecture.contracts`, `architecture.declaredDependencies` i
+  `architecture.interactions` — statycznie zadeklarowane kontrakty i przepływy;
+- `analysis.cycles`, `analysis.declaredCycles`, `analysis.dependencyConformance`,
+  `analysis.metrics` i `analysis.findings` — wyniki algorytmów i reguł.
 
 Każdy fakt ma `provenance` z pochodzeniem (`observed`, `declared`, `inferred` albo
 `derived`) oraz opcjonalnym evidence. Receipt zawiera `snapshotId`, wersję
 narzędzia, hash konfiguracji, opcji kompilatora, wejścia oraz manifest i hash
 użytego pipeline’u providerów/projectorów.
 
-## Architecture Diff 0.5
+## Architecture Diff 0.6
 
 Diff porównuje snapshot z aktualnym working tree albo z refem Git. To porównanie jest oparte o stabilne identyfikatory modułów, plików i krawędzi, więc zmiana numeru linii sama w sobie nie tworzy nowej zależności.
 
@@ -102,7 +107,7 @@ Konfiguracja projektu, snapshoty IR i deklaracje `RuleSpec` są walidowane
 runtime przez Zod. Analyzer waliduje również snapshot przed zwróceniem go do
 konsumenta, a receipt jest sprawdzany przy zapisie/odczycie. Błędy na tych
 granicach zawierają ścieżkę do niepoprawnego pola zamiast cichego rzutowania
-danych. Aktualny kontrakt IR 0.5 jest jawnie `exact`: receipt jest wymagany,
+danych. Aktualny kontrakt IR 0.6 jest jawnie `exact`: receipt jest wymagany,
 a nieznane pola oraz starsze wersje IR są odrzucane. Migracja z wcześniejszych
 wersji wymaga osobnego adaptera poza biblioteką.
 
@@ -116,6 +121,9 @@ przypadki uzasadniające stabilne Plugin SDK.
 uczestniczące w cyklu są wyróżnione, a etykiety krawędzi pokazują liczbę
 importów, udział public API oraz importy o nieznanej widoczności. Flaga `--json`
 zachowuje pełny snapshot IR zamiast formatu DOT.
+`arch graph --view interactions` emituje osobny graf deklarowanych query,
+command i event interactions; przepływ eventu biegnie od właściciela do
+subskrybenta.
 
 Konfiguracja opcjonalna: `arch.config.json` w katalogu projektu:
 
@@ -165,7 +173,8 @@ Silnik reguł nie rozgałęzia się po kodach reguł. Reguły są specyfikacjami
 `RuleSpec`: wybierają kolekcję znormalizowanych faktów, nakładają predykaty i
 mapują rekord na finding. Katalog wbudowany można rozszerzyć przez pole `rules`
 w `arch.config.json` albo programowo przez `evaluateRules(input, [...])`.
-Reguła musi wskazywać znaną kolekcję (`cycles`, `imports`,
+Reguła musi wskazywać znaną kolekcję (`cycles`, `declaredCycles`, `imports`,
+`declaredDependencies`, `contracts`, `interactions`, `dependencyConformance`,
 `forbiddenDependencies` albo `modules`), a kody reguł muszą być unikalne.
 `rules` jest skrótem dla lokalnego packa; dla jawnego kontraktu użyj
 `rulePacks` z polami `id`, `version`, `requiredFacts` i `rules`.
@@ -194,6 +203,27 @@ Domyślnie inspector pomija artefakty `node_modules`, `.next`, `dist`, `build`, 
 To jeszcze nie jest framework ani pełny system kontraktów. IR jest granicą, za którą można później wymienić analyzer, dodać diff Git i jawne deklaracje modułów bez zmiany konsumentów danych.
 
 ## Public API
+
+Architektura może być zadeklarowana bez uruchamiania kodu aplikacji w pliku
+`module.arch.ts` każdego modułu:
+
+```ts
+import { defineCommand, defineEvent, defineModule, defineQuery } from "@arch-inspector/contracts";
+import { Calendar } from "../calendar/module.arch.js";
+
+export const Booking = defineModule({
+  id: "booking",
+  publicEntrypoints: ["./index.ts"],
+  queries: { getBooking: defineQuery<{ id: string }, { status: string }>() },
+  commands: { createBooking: defineCommand<{ slotId: string }, { bookingId: string }>() },
+  events: { bookingCreated: defineEvent<{ bookingId: string }>() },
+  requires: [Calendar.queries.getAvailability],
+});
+```
+
+`arch graph --view interactions` renders query, command and event flows. Contract
+payload types remain a TypeScript guarantee and are intentionally absent from
+the IR.
 
 CLI korzysta z tego samego publicznego entrypointu co integracje Node.js:
 

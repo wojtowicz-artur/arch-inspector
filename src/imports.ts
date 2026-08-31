@@ -216,6 +216,7 @@ export function collectEdges(
         ...(toFile ? { toFile } : {}),
         specifier: current.specifier,
         importKind: current.kind,
+        purpose: path.basename(file).toLowerCase() === "module.arch.ts" ? "architecture-declaration" : "implementation",
         resolution,
         resolutionConfidence,
         ...(projectAlias ? { isProjectAlias: true } : {}),

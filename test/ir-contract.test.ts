@@ -17,10 +17,10 @@ test("validates and verifies the current Architecture IR contract", () => {
   const project = createSampleProject();
   try {
     const snapshot = analyzeProject(project.root);
-    assert.doesNotThrow(() => validateArchitectureSnapshot(snapshot, "IR 0.5 snapshot"));
-    assert.doesNotThrow(() => verifySnapshotReceipt(snapshot, "IR 0.5 snapshot"));
+    assert.doesNotThrow(() => validateArchitectureSnapshot(snapshot, "IR 0.6 snapshot"));
+    assert.doesNotThrow(() => verifySnapshotReceipt(snapshot, "IR 0.6 snapshot"));
     assert.equal(snapshot.irVersion, IR_VERSION);
-    assert.equal(snapshot.receipt.toolVersion, "0.5.0");
+    assert.equal(snapshot.receipt.toolVersion, "0.6.0");
     assert.equal(snapshot.receipt.pipelineHash, sha256(snapshot.receipt.pipeline));
 
     const tampered = structuredClone(snapshot);
@@ -67,18 +67,18 @@ test("accepts semver patch tool versions but keeps analyzer versions incomparabl
       architecture: patched.architecture,
       analysis: patched.analysis,
     };
-    patched.receipt.toolVersion = "0.5.1";
+    patched.receipt.toolVersion = "0.6.1";
     patched.receipt.snapshotId = sha256({
       ...snapshotBase,
       receipt: { ...patched.receipt, snapshotId: "" },
     });
 
-    assert.doesNotThrow(() => validateArchitectureSnapshot(patched, "IR 0.5.1 snapshot"));
-    assert.doesNotThrow(() => verifySnapshotReceipt(patched, "IR 0.5.1 snapshot"));
-    const snapshotPath = path.join(project.root, "architecture-0.5.1.json");
+    assert.doesNotThrow(() => validateArchitectureSnapshot(patched, "IR 0.6.1 snapshot"));
+    assert.doesNotThrow(() => verifySnapshotReceipt(patched, "IR 0.6.1 snapshot"));
+    const snapshotPath = path.join(project.root, "architecture-0.6.1.json");
     fs.writeFileSync(snapshotPath, JSON.stringify(patched), "utf8");
     assert.deepEqual(loadSnapshot(snapshotPath), patched);
-    assert.throws(() => diffSnapshots(snapshot, patched), /tool 0\.5\.0 != 0\.5\.1/);
+    assert.throws(() => diffSnapshots(snapshot, patched), /tool 0\.6\.0 != 0\.6\.1/);
 
     const invalid = structuredClone(patched);
     invalid.receipt.toolVersion = "0.5";

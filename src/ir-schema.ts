@@ -2,7 +2,17 @@ import { z } from "zod";
 import { IR_CONTRACT, type ArchitectureSnapshot } from "./ir.js";
 
 const factOriginSchema = z.enum(["observed", "declared", "inferred", "derived"]);
-const evidenceKindSchema = z.enum(["file", "source-edge", "module", "module-edge", "config", "rule"]);
+const evidenceKindSchema = z.enum([
+  "file",
+  "source-edge",
+  "module",
+  "module-edge",
+  "contract",
+  "declared-dependency",
+  "interaction",
+  "config",
+  "rule",
+]);
 
 const evidenceRefSchema = z
   .object({
@@ -39,6 +49,7 @@ const sourceImportSchema = z
     toFile: z.string().optional(),
     specifier: z.string(),
     importKind: z.enum(["static", "export", "dynamic", "require"]),
+    purpose: z.enum(["implementation", "architecture-declaration"]),
     resolution: z.enum(["internal", "external", "asset", "unresolved", "out-of-scope"]),
     resolutionConfidence: z.enum(["exact", "syntactic", "ambiguous"]).optional(),
     isProjectAlias: z.boolean().optional(),
@@ -71,6 +82,54 @@ const architectureModuleSchema = z
     root: z.string(),
     files: z.array(z.string()),
     entrypoints: z.array(z.string()),
+    provenance: provenanceSchema,
+  })
+  .strict();
+
+const architectureContractSchema = z
+  .object({
+    id: z.string(),
+    module: z.string(),
+    key: z.string(),
+    kind: z.enum(["query", "command", "event"]),
+    provenance: provenanceSchema,
+  })
+  .strict();
+
+const declaredDependencySchema = z
+  .object({
+    id: z.string(),
+    from: z.string(),
+    to: z.string(),
+    kind: z.enum(["dependsOn", "requires", "subscribesTo"]),
+    contractId: z.string().optional(),
+    file: z.string().optional(),
+    line: z.number().int().positive().optional(),
+    provenance: provenanceSchema,
+  })
+  .strict();
+
+const interactionSchema = z
+  .object({
+    id: z.string(),
+    kind: z.enum(["query", "command", "event"]),
+    contractId: z.string(),
+    from: z.string(),
+    to: z.string(),
+    file: z.string().optional(),
+    line: z.number().int().positive().optional(),
+    provenance: provenanceSchema,
+  })
+  .strict();
+
+const dependencyConformanceSchema = z
+  .object({
+    id: z.string(),
+    from: z.string(),
+    to: z.string(),
+    status: z.enum(["confirmed", "observed-only", "declared-only"]),
+    declaredDependencyIds: z.array(z.string()),
+    moduleEdgeIds: z.array(z.string()),
     provenance: provenanceSchema,
   })
   .strict();
@@ -209,12 +268,17 @@ const architectureSnapshotSchema: z.ZodType<ArchitectureSnapshot> = z
         modules: z.array(architectureModuleSchema),
         ownership: z.array(fileOwnershipSchema),
         moduleEdges: z.array(moduleEdgeSchema),
+        contracts: z.array(architectureContractSchema),
+        declaredDependencies: z.array(declaredDependencySchema),
+        interactions: z.array(interactionSchema),
         provenance: provenanceSchema,
       })
       .strict(),
     analysis: z
       .object({
         cycles: z.array(architectureCycleSchema),
+        declaredCycles: z.array(architectureCycleSchema),
+        dependencyConformance: z.array(dependencyConformanceSchema),
         metrics: architectureMetricsSchema,
         findings: z.array(architectureFindingSchema),
         provenance: provenanceSchema,

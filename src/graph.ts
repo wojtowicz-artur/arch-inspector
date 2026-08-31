@@ -8,7 +8,7 @@ export function buildModuleEdges(
 ): ModuleEdge[] {
   const grouped = new Map<string, ModuleEdge>();
   for (const edge of imports) {
-    if (edge.resolution !== "internal" || !edge.toFile) continue;
+    if (edge.purpose === "architecture-declaration" || edge.resolution !== "internal" || !edge.toFile) continue;
     const from = fileToModule.get(edge.fromFile);
     const to = fileToModule.get(edge.toFile);
     if (!from || !to || from === to) continue;
@@ -173,6 +173,31 @@ export function renderModuleGraphDot(snapshot: Pick<ArchitectureSnapshot, "archi
     );
   }
 
+  lines.push("}");
+  return `${lines.join("\n")}\n`;
+}
+
+/** Render declared query/command/event flows as a deterministic Graphviz DOT graph. */
+export function renderInteractionGraphDot(snapshot: Pick<ArchitectureSnapshot, "architecture" | "analysis">): string {
+  const { modules, interactions } = snapshot.architecture;
+  const cycleModules = new Set(snapshot.analysis.declaredCycles.flatMap((cycle) => cycle.modules));
+  const lines = [
+    "digraph interactions {",
+    "  rankdir=LR;",
+    '  graph [fontname="sans-serif", bgcolor="transparent"];',
+    '  node [shape=box, fontname="sans-serif"];',
+    '  edge [fontname="sans-serif"];',
+  ];
+  for (const module of [...modules].sort((a, b) => compare(a.id, b.id))) {
+    const attributes = [`label=${dotString(module.id)}`];
+    if (cycleModules.has(module.id)) attributes.push('color="#dc2626"', 'penwidth="2"');
+    lines.push(`  ${dotString(module.id)} [${attributes.join(", ")}];`);
+  }
+  for (const interaction of [...interactions].sort((a, b) => compare(a.id, b.id))) {
+    lines.push(
+      `  ${dotString(interaction.from)} -> ${dotString(interaction.to)} [label=${dotString(`${interaction.kind} (${interaction.contractId})`)}];`,
+    );
+  }
   lines.push("}");
   return `${lines.join("\n")}\n`;
 }

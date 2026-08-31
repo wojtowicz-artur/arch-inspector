@@ -16,10 +16,11 @@ import {
   BUILTIN_FACT_PROVIDERS,
   clonePipelineManifest,
   collectFacts,
+  declarativeArchitectureProjector,
   hashPipeline,
   moduleGraphProjector,
+  moduleInferenceProjector,
   ownershipProjector,
-  type ModuleInferenceFact,
 } from "./pipeline.js";
 import { BUILTIN_RULES, evaluateRules } from "./rules.js";
 import { sha256 } from "./stable.js";
@@ -44,15 +45,16 @@ function metrics(
     fanOut.set(edge.from, (fanOut.get(edge.from) ?? 0) + 1);
     fanIn.set(edge.to, (fanIn.get(edge.to) ?? 0) + 1);
   }
+  const implementationImports = imports.filter((edge) => edge.purpose !== "architecture-declaration");
   return {
     sourceFiles: project.files.length,
     modules: modules.length,
-    imports: imports.length,
-    internalImports: imports.filter((edge) => edge.resolution === "internal").length,
-    externalImports: imports.filter((edge) => edge.resolution === "external").length,
-    assetImports: imports.filter((edge) => edge.resolution === "asset").length,
-    unresolvedImports: imports.filter((edge) => edge.resolution === "unresolved").length,
-    outOfScopeImports: imports.filter((edge) => edge.resolution === "out-of-scope").length,
+    imports: implementationImports.length,
+    internalImports: implementationImports.filter((edge) => edge.resolution === "internal").length,
+    externalImports: implementationImports.filter((edge) => edge.resolution === "external").length,
+    assetImports: implementationImports.filter((edge) => edge.resolution === "asset").length,
+    unresolvedImports: implementationImports.filter((edge) => edge.resolution === "unresolved").length,
+    outOfScopeImports: implementationImports.filter((edge) => edge.resolution === "out-of-scope").length,
     moduleEdges: moduleEdges.length,
     cycles: cycles.length,
     deepImports: moduleEdges.reduce((total, edge) => total + edge.deepImports, 0),
@@ -172,7 +174,10 @@ function analyzeDiscoveredProject(
   const factStore = collectFacts({ project, typeAware, sourceAstCache, resolutionCache }, BUILTIN_FACT_PROVIDERS);
   const files = [...factStore.facts<SourceFile>("source.files")];
   const imports = [...factStore.facts<SourceImport>("source.imports")];
-  const moduleFacts = factStore.requireOne<ModuleInferenceFact>("architecture.module-inference");
+  const declarations = [
+    ...factStore.facts<import("./declarations.js").ModuleDeclarationFact>("architecture.declarations"),
+  ];
+  const moduleFacts = moduleInferenceProjector.project({ project, declarations });
   const fileToModule = new Map(moduleFacts.fileToModule);
   const moduleEntrypoints = new Map(
     moduleFacts.moduleEntrypoints.map(([module, entrypoints]) => [module, new Set(entrypoints)] as const),
@@ -184,6 +189,12 @@ function analyzeDiscoveredProject(
     moduleEntrypoints,
   });
   const { moduleEdges, cycles } = moduleGraph;
+  const declarative = declarativeArchitectureProjector.project({
+    modules: moduleFacts.modules,
+    declarations,
+    moduleEdges,
+    projectRoot: project.root,
+  });
   const findings: ArchitectureFinding[] = evaluateRules({
     config: project.config,
     modules: [...moduleFacts.modules],
@@ -192,6 +203,11 @@ function analyzeDiscoveredProject(
     fileToModule,
     moduleEntrypoints,
     cycles,
+    declaredDependencies: declarative.declaredDependencies,
+    contracts: declarative.contracts,
+    interactions: declarative.interactions,
+    dependencyConformance: declarative.dependencyConformance,
+    declaredCycles: declarative.declaredCycles,
   });
   const ownership = ownershipProjector.project({ files, fileToModule });
   const projectFacts = {
@@ -223,10 +239,15 @@ function analyzeDiscoveredProject(
     modules: [...moduleFacts.modules],
     ownership,
     moduleEdges,
+    contracts: declarative.contracts,
+    declaredDependencies: declarative.declaredDependencies,
+    interactions: declarative.interactions,
     provenance: { origin: "derived" as const, analyzer: "module-projection" },
   };
   const analysis = {
     cycles,
+    declaredCycles: declarative.declaredCycles,
+    dependencyConformance: declarative.dependencyConformance,
     metrics: metrics(project, [...moduleFacts.modules], imports, moduleEdges, cycles),
     findings,
     provenance: { origin: "derived" as const, analyzer: "architecture-analysis" },

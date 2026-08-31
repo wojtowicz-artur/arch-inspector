@@ -3,6 +3,8 @@ import type { ArchitectureFinding } from "./ir.js";
 /** Canonical finding codes that can be selected by the CLI/config policy. */
 export const BUILTIN_FAIL_ON_CODES = [
   "architecture/cycle",
+  "architecture/declared-cycle",
+  "architecture/undeclared-dependency",
   "architecture/unresolved-import",
   "architecture/out-of-scope-import",
   "architecture/dynamic-import-ambiguous",
@@ -15,6 +17,10 @@ export const BUILTIN_FAIL_ON_CODES = [
 const aliases: Readonly<Record<string, string>> = {
   cycles: "architecture/cycle",
   cycle: "architecture/cycle",
+  "declared-cycles": "architecture/declared-cycle",
+  "declared-cycle": "architecture/declared-cycle",
+  "undeclared-dependencies": "architecture/undeclared-dependency",
+  "undeclared-dependency": "architecture/undeclared-dependency",
   "deep-imports": "architecture/deep-import",
   "deep-import": "architecture/deep-import",
   "forbidden-dependencies": "architecture/forbidden-dependency",

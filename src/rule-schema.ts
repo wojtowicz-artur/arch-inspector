@@ -2,7 +2,17 @@ import { z } from "zod";
 
 const ruleFieldRefSchema = z.object({ field: z.string().min(1) }).strict();
 
-export const ruleSourceSchema = z.enum(["cycles", "imports", "forbiddenDependencies", "modules"]);
+export const ruleSourceSchema = z.enum([
+  "cycles",
+  "declaredCycles",
+  "imports",
+  "declaredDependencies",
+  "contracts",
+  "interactions",
+  "dependencyConformance",
+  "forbiddenDependencies",
+  "modules",
+]);
 export type RuleSource = z.infer<typeof ruleSourceSchema>;
 
 export const ruleFlagSchema = z.enum(["noCycles", "noDeepImports", "forbiddenDependencies"]);
@@ -34,12 +44,14 @@ const ruleFindingTemplateSchema = z
 
 export const ruleFieldsBySource: Readonly<Record<z.infer<typeof ruleSourceSchema>, readonly string[]>> = {
   cycles: ["id", "modules", "edgeIds"],
+  declaredCycles: ["id", "modules", "edgeIds"],
   imports: [
     "id",
     "fromFile",
     "toFile",
     "specifier",
     "line",
+    "purpose",
     "resolution",
     "resolutionConfidence",
     "isProjectAlias",
@@ -61,6 +73,7 @@ export const ruleFieldsBySource: Readonly<Record<z.infer<typeof ruleSourceSchema
     "isBoundaryViolation",
     "boundaryZone",
     "boundaryMessage",
+    "isDeclaredOnly",
   ],
   forbiddenDependencies: [
     "id",
@@ -68,6 +81,7 @@ export const ruleFieldsBySource: Readonly<Record<z.infer<typeof ruleSourceSchema
     "toFile",
     "specifier",
     "line",
+    "purpose",
     "resolution",
     "resolutionConfidence",
     "isProjectAlias",
@@ -90,8 +104,13 @@ export const ruleFieldsBySource: Readonly<Record<z.infer<typeof ruleSourceSchema
     "boundaryZone",
     "boundaryMessage",
     "forbiddenMessage",
+    "isDeclaredOnly",
   ],
   modules: ["moduleId", "hasPublicEntrypoint", "hasPeers", "related"],
+  declaredDependencies: ["id", "from", "to", "kind", "contractId", "file", "line", "isDeclaredOnly"],
+  contracts: ["id", "module", "key", "kind"],
+  interactions: ["id", "kind", "contractId", "from", "to", "file", "line"],
+  dependencyConformance: ["id", "from", "to", "status", "declaredDependencyIds", "moduleEdgeIds"],
 };
 
 function validateRuleFieldReference(

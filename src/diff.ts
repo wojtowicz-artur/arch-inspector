@@ -1,13 +1,17 @@
 import fs from "node:fs";
 import {
   type ArchitectureCycle,
+  type ArchitectureContract,
+  type ArchitectureDeclaredDependency,
   type ArchitectureFinding,
+  type ArchitectureInteraction,
   type ArchitectureModule,
   type ArchitectureSnapshot,
   type FileOwnership,
   type ModuleEdge,
   type SourceFile,
   type SourceImport,
+  type DependencyConformance,
 } from "./ir.js";
 import { validateArchitectureSnapshot, verifySnapshotReceipt } from "./ir-contract.js";
 import { findingKey } from "./rules.js";
@@ -53,9 +57,14 @@ export interface ArchitectureDiff {
     modules: CollectionDiff<ArchitectureModule>;
     ownership: CollectionDiff<FileOwnership>;
     moduleEdges: CollectionDiff<ModuleEdge>;
+    contracts: CollectionDiff<ArchitectureContract>;
+    declaredDependencies: CollectionDiff<ArchitectureDeclaredDependency>;
+    interactions: CollectionDiff<ArchitectureInteraction>;
   };
   analysis: {
     cycles: CollectionDiff<ArchitectureCycle>;
+    declaredCycles: CollectionDiff<ArchitectureCycle>;
+    dependencyConformance: CollectionDiff<DependencyConformance>;
     findings: CollectionDiff<ArchitectureFinding>;
     metrics: Record<string, MetricDelta>;
   };
@@ -139,6 +148,10 @@ function stableEdgeKey(edge: ModuleEdge, modules: Map<string, string>): string {
   return `${modules.get(edge.from) ?? edge.from}\0${modules.get(edge.to) ?? edge.to}`;
 }
 
+function stableConformanceKey(entry: DependencyConformance, modules: Map<string, string>): string {
+  return `${modules.get(entry.from) ?? entry.from}\0${modules.get(entry.to) ?? entry.to}`;
+}
+
 function stableCycleKey(cycle: ArchitectureCycle, modules: Map<string, string>): string {
   return cycle.modules
     .map((module) => modules.get(module) ?? module)
@@ -196,11 +209,38 @@ export function diffSnapshots(
     (edge) => stableEdgeKey(edge, beforeModuleKeys),
     (edge) => stableEdgeKey(edge, afterModuleKeys),
   );
+  const contracts = diffCollection(
+    before.architecture.contracts,
+    after.architecture.contracts,
+    (contract) => contract.id,
+  );
+  const declaredDependencies = diffCollection(
+    before.architecture.declaredDependencies,
+    after.architecture.declaredDependencies,
+    (dependency) => dependency.id,
+  );
+  const interactions = diffCollection(
+    before.architecture.interactions,
+    after.architecture.interactions,
+    (interaction) => interaction.id,
+  );
   const cycles = diffCollection(
     before.analysis.cycles,
     after.analysis.cycles,
     (cycle) => stableCycleKey(cycle, beforeModuleKeys),
     (cycle) => stableCycleKey(cycle, afterModuleKeys),
+  );
+  const declaredCycles = diffCollection(
+    before.analysis.declaredCycles,
+    after.analysis.declaredCycles,
+    (cycle) => stableCycleKey(cycle, beforeModuleKeys),
+    (cycle) => stableCycleKey(cycle, afterModuleKeys),
+  );
+  const dependencyConformance = diffCollection(
+    before.analysis.dependencyConformance,
+    after.analysis.dependencyConformance,
+    (entry) => stableConformanceKey(entry, beforeModuleKeys),
+    (entry) => stableConformanceKey(entry, afterModuleKeys),
   );
   const findings = diffCollection(before.analysis.findings, after.analysis.findings, findingKey);
   const introducedViolations = findings.added
@@ -217,11 +257,11 @@ export function diffSnapshots(
     policy: { failOn: [...after.policy.failOn] },
     comparability: { status: "comparable", reasons: [] },
     source: { files, imports },
-    architecture: { modules, ownership, moduleEdges },
-    analysis: { cycles, findings, metrics: metricDeltas(before, after) },
+    architecture: { modules, ownership, moduleEdges, contracts, declaredDependencies, interactions },
+    analysis: { cycles, declaredCycles, dependencyConformance, findings, metrics: metricDeltas(before, after) },
     introducedViolations,
     resolvedViolations,
-    hasRegressions: cycles.added.length > 0 || introducedViolations.length > 0,
+    hasRegressions: cycles.added.length > 0 || declaredCycles.added.length > 0 || introducedViolations.length > 0,
   };
 }
 

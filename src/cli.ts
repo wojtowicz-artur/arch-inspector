@@ -5,20 +5,21 @@ import { analyzeProject } from "./analyzer.js";
 import { diffSnapshots, loadSnapshot, SnapshotComparisonError, type ArchitectureDiff } from "./diff.js";
 import { analyzeGitRef } from "./git.js";
 import { isKnownFailOnSelector, matchesFailOn } from "./fail-on.js";
-import { renderModuleGraphDot } from "./graph.js";
+import { renderInteractionGraphDot, renderModuleGraphDot } from "./graph.js";
 import type { ArchitectureFinding, ArchitectureSnapshot, SourceImport } from "./ir.js";
 import { renderSarif } from "./sarif.js";
 
 function usage(): string {
   return `Usage:
   arch inspect [project] [--json|--sarif] [--out <file>]
-  arch graph [project] [--json] [--out <file>]  # Graphviz DOT by default
+  arch graph [project] [--json] [--view module|interactions] [--out <file>]  # Graphviz DOT by default
   arch check [project] [--json|--sarif] [--out <file>] [--fail-on <selector,...>]
   arch diff <git-ref|snapshot.json> [project] [--json|--sarif] [--out <file>] [--check] [--fail-on <selector,...>]
   arch audit [git-ref|snapshot.json] [project] [--json|--sarif] [--out <file>] [--fail-on <selector,...>]
 
-Selectors include: all, violations, built-in short aliases (cycles, deep-imports,
-forbidden-dependency) or canonical finding codes such as architecture/cycle.
+Selectors include: all, violations, built-in short aliases (cycles, declared-cycles,
+undeclared-dependency, deep-imports, forbidden-dependency) or canonical finding
+codes such as architecture/cycle.
 Without --fail-on, check is report-only unless the project config declares failOn.
 The inspector reads an existing TypeScript project and emits a deterministic Architecture IR snapshot.
 The diff command compares the current project with a comparable snapshot or Git ref without changing the worktree.
@@ -34,6 +35,7 @@ interface ParsedArgs {
   failOn?: string[];
   base?: string;
   out?: string;
+  view?: "module" | "interactions";
 }
 
 function parseFailOn(args: string[]): string[] | undefined {
@@ -72,12 +74,24 @@ function parseArgs(args: string[]): ParsedArgs {
     throw new Error(`Unknown command '${command}'.\n\n${usage()}`);
   const positional: string[] = [];
   let out: string | undefined;
+  let view: "module" | "interactions" | undefined;
   for (let index = 1; index < args.length; index += 1) {
     const argument = args[index];
     if (argument === "--out" || argument === "-o") {
       out = args[index + 1];
       if (!out || out.startsWith("--")) throw new Error("--out requires a file path.");
       index += 1;
+    } else if (argument === "--view") {
+      const value = args[index + 1];
+      if (command !== "graph") throw new Error("--view is only available for the graph command.");
+      if (value !== "module" && value !== "interactions") throw new Error("--view must be 'module' or 'interactions'.");
+      view = value;
+      index += 1;
+    } else if (argument.startsWith("--view=")) {
+      const value = argument.slice("--view=".length);
+      if (command !== "graph") throw new Error("--view is only available for the graph command.");
+      if (value !== "module" && value !== "interactions") throw new Error("--view must be 'module' or 'interactions'.");
+      view = value;
     } else if (argument === "--fail-on") {
       index += 1;
     } else if (!argument.startsWith("--")) {
@@ -100,6 +114,7 @@ function parseArgs(args: string[]): ParsedArgs {
       check: command === "audit" || args.includes("--check"),
       ...(failOn ? { failOn } : {}),
       ...(out ? { out } : {}),
+      ...(view ? { view } : {}),
     };
   }
   return {
@@ -110,6 +125,7 @@ function parseArgs(args: string[]): ParsedArgs {
     check: false,
     ...(failOn ? { failOn } : {}),
     ...(out ? { out } : {}),
+    ...(view ? { view } : {}),
   };
 }
 
@@ -124,7 +140,11 @@ function renderText(snapshot: ArchitectureSnapshot): string {
     `Modules: ${metrics.modules}`,
     `Imports: ${metrics.imports} (${metrics.internalImports} internal, ${metrics.externalImports} external, ${metrics.assetImports} assets, ${metrics.unresolvedImports} unresolved, ${metrics.outOfScopeImports ?? 0} out-of-scope)`,
     `Module edges: ${metrics.moduleEdges}`,
+    `Contracts: ${snapshot.architecture.contracts.length}`,
+    `Declared dependencies: ${snapshot.architecture.declaredDependencies.length}`,
+    `Interactions: ${snapshot.architecture.interactions.length}`,
     `Cycles: ${metrics.cycles}`,
+    `Declared cycles: ${snapshot.analysis.declaredCycles.length}`,
     `Deep imports: ${metrics.deepImports}`,
     `Unknown visibility imports: ${metrics.unknownVisibilityImports ?? 0}`,
     `Max fan-in: ${metrics.maxFanIn ? `${metrics.maxFanIn.module} (${metrics.maxFanIn.value})` : "-"}`,
@@ -184,6 +204,28 @@ function renderDiff(diff: ArchitectureDiff): string {
     diff.architecture.moduleEdges.changed.map(({ after }) => `${after.from} → ${after.to} changed`),
   );
   section(
+    "Contracts",
+    diff.architecture.contracts.added.map((contract) => `${contract.module}.${contract.kind}.${contract.key}`),
+    diff.architecture.contracts.removed.map((contract) => `${contract.module}.${contract.kind}.${contract.key}`),
+    diff.architecture.contracts.changed.map(({ after }) => `${after.id} changed`),
+  );
+  section(
+    "Declared dependencies",
+    diff.architecture.declaredDependencies.added.map((dependency) => `${dependency.from} → ${dependency.to}`),
+    diff.architecture.declaredDependencies.removed.map((dependency) => `${dependency.from} → ${dependency.to}`),
+    diff.architecture.declaredDependencies.changed.map(({ after }) => `${after.from} → ${after.to} changed`),
+  );
+  section(
+    "Interactions",
+    diff.architecture.interactions.added.map(
+      (interaction) => `${interaction.from} → ${interaction.to} (${interaction.kind})`,
+    ),
+    diff.architecture.interactions.removed.map(
+      (interaction) => `${interaction.from} → ${interaction.to} (${interaction.kind})`,
+    ),
+    diff.architecture.interactions.changed.map(({ after }) => `${after.from} → ${after.to} changed`),
+  );
+  section(
     "Import edges",
     diff.source.imports.added.map(shortImport),
     diff.source.imports.removed.map(shortImport),
@@ -193,6 +235,17 @@ function renderDiff(diff: ArchitectureDiff): string {
     "Cycles",
     diff.analysis.cycles.added.map((cycle) => cycle.modules.join(", ")),
     diff.analysis.cycles.removed.map((cycle) => cycle.modules.join(", ")),
+  );
+  section(
+    "Declared cycles",
+    diff.analysis.declaredCycles.added.map((cycle) => cycle.modules.join(", ")),
+    diff.analysis.declaredCycles.removed.map((cycle) => cycle.modules.join(", ")),
+  );
+  section(
+    "Dependency conformance",
+    diff.analysis.dependencyConformance.added.map((entry) => `${entry.from} → ${entry.to} (${entry.status})`),
+    diff.analysis.dependencyConformance.removed.map((entry) => `${entry.from} → ${entry.to} (${entry.status})`),
+    diff.analysis.dependencyConformance.changed.map(({ after }) => `${after.from} → ${after.to} (${after.status})`),
   );
   section(
     "Findings",
@@ -268,7 +321,9 @@ function main(): void {
     : parsed.json
       ? `${JSON.stringify(snapshot, null, 2)}\n`
       : parsed.command === "graph"
-        ? renderModuleGraphDot(snapshot)
+        ? parsed.view === "interactions"
+          ? renderInteractionGraphDot(snapshot)
+          : renderModuleGraphDot(snapshot)
         : `${renderText(snapshot)}\n`;
   if (parsed.out) {
     const fileContents = parsed.sarif
@@ -290,9 +345,15 @@ try {
   const message = error instanceof Error ? error.message : String(error);
   const exitCode = error instanceof SnapshotComparisonError ? 3 : 2;
   if (process.argv.includes("--json")) {
+    const errorCode =
+      error && typeof error === "object" && "code" in error && typeof error.code === "string"
+        ? error.code
+        : error instanceof SnapshotComparisonError
+          ? error.code
+          : "ANALYSIS_ERROR";
     const envelope = {
       error: true,
-      code: error instanceof SnapshotComparisonError ? error.code : "ANALYSIS_ERROR",
+      code: errorCode,
       message,
     };
     process.stdout.write(`${JSON.stringify(envelope)}\n`);

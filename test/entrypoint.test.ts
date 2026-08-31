@@ -23,9 +23,9 @@ test("public entrypoint exposes the library API", () => {
     const sessionSnapshot = createAnalyzerSession().analyze(project.root);
     const diff = diffSnapshots(snapshot, snapshot);
 
-    assert.equal(IR_VERSION, "0.5");
+    assert.equal(IR_VERSION, "0.6");
     assert.deepEqual(IR_CONTRACT, {
-      version: "0.5",
+      version: "0.6",
       compatibility: "exact",
       unknownFields: "reject",
       receipt: "required",
@@ -159,7 +159,14 @@ test("builds a deterministic rule registry from versioned packs", () => {
     registry.packs.map((pack) => pack.id),
     ["arch-inspector/core", "project/custom"],
   );
-  assert.deepEqual(registry.requiredFacts, ["cycles", "forbiddenDependencies", "imports", "modules"]);
+  assert.deepEqual(registry.requiredFacts, [
+    "cycles",
+    "declaredCycles",
+    "dependencyConformance",
+    "forbiddenDependencies",
+    "imports",
+    "modules",
+  ]);
   assert.equal(registry.rules.length, BUILTIN_RULE_PACK.rules.length + 1);
   assert.throws(
     () =>

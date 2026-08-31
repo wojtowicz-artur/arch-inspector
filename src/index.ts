@@ -8,7 +8,7 @@
 export { analyzeProject, AnalyzerSession, createAnalyzerSession } from "./analyzer.js";
 export { analyzeGitRef } from "./git.js";
 export { diffSnapshots, loadSnapshot, SnapshotComparisonError } from "./diff.js";
-export { renderModuleGraphDot } from "./graph.js";
+export { renderInteractionGraphDot, renderModuleGraphDot } from "./graph.js";
 export { createSarifLog, renderSarif } from "./sarif.js";
 export {
   ArchitectureIRValidationError,
@@ -37,17 +37,25 @@ export {
 export type {
   AnalysisFacts,
   ArchitectureCycle,
+  ArchitectureContract,
+  ArchitectureContractKind,
+  ArchitectureDeclaredDependency,
   ArchitectureFinding,
+  ArchitectureInteraction,
   ArchitectureMetrics,
   ArchitectureModule,
   ArchitectureSnapshot,
   DiagnosticCategory,
   DiagnosticLevel,
+  DependencyConformance,
+  DependencyConformanceStatus,
+  DeclaredDependencyKind,
   EvidenceKind,
   EvidenceRef,
   FactOrigin,
   FileOwnership,
   ImportKind,
+  ImportPurpose,
   ImportedSymbolKind,
   ModuleEdge,
   ModuleEdgeVisibility,
@@ -80,3 +88,5 @@ export type { RuleFlag, RulePack, RuleSource } from "./rule-schema.js";
 export type { InspectorConfig, ModuleIdStrategy } from "./project.js";
 export { buildTypeAwareImportIndex } from "./type-aware.js";
 export type { TypeAwareImportIndex, TypeAwareImportInfo, TypeAwareImportSymbol } from "./type-aware.js";
+export { ArchitectureDeclarationError, collectModuleDeclarations } from "./declarations.js";
+export type { ModuleDeclarationContract, ModuleDeclarationFact, ModuleDeclarationReference } from "./declarations.js";

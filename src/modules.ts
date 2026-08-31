@@ -2,12 +2,18 @@ import fs from "node:fs";
 import path from "node:path";
 import type { ModuleIdStrategy } from "./config-schema.js";
 import type { ArchitectureModule } from "./ir.js";
+import {
+  ArchitectureDeclarationError,
+  declarationEntrypointFiles,
+  type ModuleDeclarationFact,
+} from "./declarations.js";
 import { isWithin, relativeToRoot, resolveConfiguredModuleRoots, type DiscoveredProject } from "./project.js";
 
 interface ModuleCandidate {
   baseId: string;
   root: string;
   declared: boolean;
+  declaration?: boolean;
   publicEntrypoints?: string[];
 }
 
@@ -132,6 +138,17 @@ export function inferModules(project: DiscoveredProject): {
   fileToModule: Map<string, string>;
   moduleRoots: Map<string, string>;
 } {
+  return inferModulesWithDeclarations(project, []);
+}
+
+export function inferModulesWithDeclarations(
+  project: DiscoveredProject,
+  declarations: readonly ModuleDeclarationFact[],
+): {
+  modules: ArchitectureModule[];
+  fileToModule: Map<string, string>;
+  moduleRoots: Map<string, string>;
+} {
   const configuredRoots = resolveConfiguredModuleRoots(project);
   const explicitModules: ExplicitModule[] = Object.entries(project.config.modules ?? {})
     .map(([id, declaration]) => ({
@@ -140,6 +157,32 @@ export function inferModules(project: DiscoveredProject): {
       ...(declaration.publicEntrypoints ? { publicEntrypoints: declaration.publicEntrypoints } : {}),
     }))
     .sort((a, b) => b.root.length - a.root.length || a.id.localeCompare(b.id));
+  const declaredModules: ExplicitModule[] = declarations
+    .map((declaration) => ({
+      id: declaration.id,
+      root: path.normalize(declaration.root),
+      publicEntrypoints: declarationEntrypointFiles(project, declaration),
+    }))
+    .sort((left, right) => right.root.length - left.root.length || left.id.localeCompare(right.id));
+  for (const fact of declarations) {
+    const declaration = declaredModules.find(
+      (candidate) => candidate.id === fact.id && candidate.root === path.normalize(fact.root),
+    )!;
+    const conflicting = explicitModules.find(
+      (configured) =>
+        configured.id === declaration.id ||
+        configured.root === declaration.root ||
+        isWithin(configured.root, declaration.root) ||
+        isWithin(declaration.root, configured.root),
+    );
+    if (conflicting || Object.prototype.hasOwnProperty.call(project.config.publicEntrypoints ?? {}, declaration.id)) {
+      throw new ArchitectureDeclarationError(
+        fact.file,
+        fact.line,
+        `Module '${declaration.id}' is declared in ${relativeToRoot(project.root, declaration.root)}/module.arch.ts and arch.config.json; declare it in only one place.`,
+      );
+    }
+  }
   for (const module of explicitModules) {
     if (!fs.existsSync(module.root) || !fs.statSync(module.root).isDirectory()) {
       throw new Error(
@@ -152,23 +195,41 @@ export function inferModules(project: DiscoveredProject): {
   }
   const candidatesByRoot = new Map<string, ModuleCandidate>();
 
+  for (const declaration of declaredModules) {
+    candidatesByRoot.set(declaration.root, {
+      baseId: declaration.id,
+      root: declaration.root,
+      declared: true,
+      declaration: true,
+      ...(declaration.publicEntrypoints ? { publicEntrypoints: declaration.publicEntrypoints } : {}),
+    });
+  }
+
   for (const file of project.files) {
     const explicit = explicitModules.find((module) => isWithin(module.root, file));
+    const declaration = declaredModules.find((module) => isWithin(module.root, file));
     const matchingRoots = configuredRoots.filter((root) => isWithin(root, file)).sort((a, b) => b.length - a.length);
     const selectedRoot = matchingRoots[0] ?? project.sourceRoot;
-    const candidate = explicit
-      ? { baseId: explicit.id, root: explicit.root }
-      : matchingRoots.length === 0 && !isWithin(project.sourceRoot, file)
-        ? outsideSourceRootCandidate(project, file)
-        : candidateRoot(selectedRoot, file);
+    const candidate = declaration
+      ? { baseId: declaration.id, root: declaration.root }
+      : explicit
+        ? { baseId: explicit.id, root: explicit.root }
+        : matchingRoots.length === 0 && !isWithin(project.sourceRoot, file)
+          ? outsideSourceRootCandidate(project, file)
+          : candidateRoot(selectedRoot, file);
     const root = path.normalize(candidate.root);
     const current = candidatesByRoot.get(root);
     if (!current || (explicit && !current.declared)) {
       candidatesByRoot.set(root, {
         baseId: candidate.baseId,
         root,
-        declared: Boolean(explicit),
-        ...(explicit?.publicEntrypoints ? { publicEntrypoints: explicit.publicEntrypoints } : {}),
+        declared: Boolean(explicit || declaration),
+        ...(declaration ? { declaration: true } : {}),
+        ...(declaration?.publicEntrypoints
+          ? { publicEntrypoints: declaration.publicEntrypoints }
+          : explicit?.publicEntrypoints
+            ? { publicEntrypoints: explicit.publicEntrypoints }
+            : {}),
       });
     }
   }
@@ -222,7 +283,19 @@ export function inferModules(project: DiscoveredProject): {
         origin: assignment?.declared ? "declared" : "inferred",
         analyzer: "module-inference",
         ...(assignment?.declared
-          ? { evidence: [{ kind: "config" as const, id: `module:${id}` }] }
+          ? {
+              evidence: [
+                {
+                  kind: assignment.declaration ? ("file" as const) : ("config" as const),
+                  id: assignment.declaration
+                    ? `${relativeToRoot(project.root, assignment.root)}/module.arch.ts`
+                    : `module:${id}`,
+                  ...(assignment.declaration
+                    ? { file: `${relativeToRoot(project.root, assignment.root)}/module.arch.ts` }
+                    : {}),
+                },
+              ],
+            }
           : {
               evidence: files.map((file) => ({
                 kind: "file" as const,

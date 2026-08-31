@@ -1,5 +1,5 @@
-export const IR_VERSION = "0.5" as const;
-export const TOOL_VERSION = "0.5.0" as const;
+export const IR_VERSION = "0.6" as const;
+export const TOOL_VERSION = "0.6.0" as const;
 export const IR_CONTRACT = {
   version: IR_VERSION,
   compatibility: "exact",
@@ -11,13 +11,23 @@ export const IR_CONTRACT = {
 export type Resolution = "internal" | "external" | "asset" | "unresolved" | "out-of-scope";
 export type ResolutionConfidence = "exact" | "syntactic" | "ambiguous";
 export type ImportKind = "static" | "export" | "dynamic" | "require";
+export type ImportPurpose = "implementation" | "architecture-declaration";
 export type ImportedSymbolKind = "type" | "value" | "both" | "unknown";
 export type ModuleEdgeVisibility = "public" | "deep" | "unknown" | "mixed";
 export type DiagnosticLevel = "error" | "warning" | "info";
 export type DiagnosticCategory = "violation" | "observation";
 export type FactOrigin = "observed" | "declared" | "inferred" | "derived";
 
-export type EvidenceKind = "file" | "source-edge" | "module" | "module-edge" | "config" | "rule";
+export type EvidenceKind =
+  | "file"
+  | "source-edge"
+  | "module"
+  | "module-edge"
+  | "contract"
+  | "declared-dependency"
+  | "interaction"
+  | "config"
+  | "rule";
 
 export interface EvidenceRef {
   kind: EvidenceKind;
@@ -79,6 +89,8 @@ export interface SourceImport {
   toFile?: string;
   specifier: string;
   importKind: ImportKind;
+  /** Purpose of the edge. Declaration imports are source evidence but are not implementation dependencies. */
+  purpose: ImportPurpose;
   resolution: Resolution;
   /** Whether the resolver proved the target or the classification is heuristic. */
   resolutionConfidence?: ResolutionConfidence;
@@ -115,6 +127,53 @@ export interface ArchitectureModule {
   provenance: Provenance;
 }
 
+export type ArchitectureContractKind = "query" | "command" | "event";
+
+/** Runtime-light contract metadata projected from a module.arch.ts file. */
+export interface ArchitectureContract {
+  id: string;
+  module: string;
+  key: string;
+  kind: ArchitectureContractKind;
+  provenance: Provenance;
+}
+
+export type DeclaredDependencyKind = "dependsOn" | "requires" | "subscribesTo";
+
+export interface ArchitectureDeclaredDependency {
+  id: string;
+  from: string;
+  to: string;
+  kind: DeclaredDependencyKind;
+  contractId?: string;
+  file?: string;
+  line?: number;
+  provenance: Provenance;
+}
+
+export interface ArchitectureInteraction {
+  id: string;
+  kind: ArchitectureContractKind;
+  contractId: string;
+  from: string;
+  to: string;
+  file?: string;
+  line?: number;
+  provenance: Provenance;
+}
+
+export type DependencyConformanceStatus = "confirmed" | "observed-only" | "declared-only";
+
+export interface DependencyConformance {
+  id: string;
+  from: string;
+  to: string;
+  status: DependencyConformanceStatus;
+  declaredDependencyIds: string[];
+  moduleEdgeIds: string[];
+  provenance: Provenance;
+}
+
 export interface FileOwnership {
   file: string;
   module: string;
@@ -139,6 +198,9 @@ export interface ArchitectureFacts {
   modules: ArchitectureModule[];
   ownership: FileOwnership[];
   moduleEdges: ModuleEdge[];
+  contracts: ArchitectureContract[];
+  declaredDependencies: ArchitectureDeclaredDependency[];
+  interactions: ArchitectureInteraction[];
   provenance: Provenance;
 }
 
@@ -183,6 +245,8 @@ export interface ArchitectureFinding {
 
 export interface AnalysisFacts {
   cycles: ArchitectureCycle[];
+  declaredCycles: ArchitectureCycle[];
+  dependencyConformance: DependencyConformance[];
   metrics: ArchitectureMetrics;
   findings: ArchitectureFinding[];
   provenance: Provenance;

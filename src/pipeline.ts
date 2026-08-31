@@ -12,7 +12,9 @@ import {
   type SourceImport,
 } from "./ir.js";
 import { buildModuleEdges, findCycles } from "./graph.js";
-import { inferModules } from "./modules.js";
+import { projectDeclarativeArchitecture, type DeclarativeArchitectureProjection } from "./architecture.js";
+import { inferModulesWithDeclarations } from "./modules.js";
+import { collectModuleDeclarations, type ModuleDeclarationFact } from "./declarations.js";
 import { relativeToRoot, type DiscoveredProject } from "./project.js";
 import { sha256 } from "./stable.js";
 import type { TypeAwareImportIndex } from "./type-aware.js";
@@ -184,32 +186,20 @@ const importProvider: FactProvider<SourceImport> = {
   }),
 };
 
-const moduleProvider: FactProvider<ModuleInferenceFact> = {
-  id: "architecture/module-inference",
+const declarationProvider: FactProvider<ModuleDeclarationFact> = {
+  id: "architecture/declarations",
   version: TOOL_VERSION,
-  factKind: "architecture.module-inference",
+  factKind: "architecture.declarations",
   collect: ({ project }) => {
-    const inferred = inferModules(project);
-    const fileToModule = [...inferred.fileToModule.entries()]
-      .map(([file, module]) => [relativeToRoot(project.root, file), module] as const)
-      .sort(([left], [right]) => left.localeCompare(right));
-    const moduleEntrypoints = inferred.modules
-      .map((module) => [module.id, [...module.entrypoints]] as const)
-      .sort(([left], [right]) => left.localeCompare(right));
+    const declarations = collectModuleDeclarations(project);
     return {
-      source: { id: moduleProvider.id, version: moduleProvider.version },
-      facts: [
-        {
-          modules: Object.freeze([...inferred.modules]),
-          fileToModule,
-          moduleEntrypoints,
-        },
-      ],
+      source: { id: declarationProvider.id, version: declarationProvider.version },
+      facts: declarations,
     };
   },
 };
 
-export const BUILTIN_FACT_PROVIDERS = [moduleProvider, sourceFileProvider, importProvider] as const;
+export const BUILTIN_FACT_PROVIDERS = [declarationProvider, sourceFileProvider, importProvider] as const;
 
 /** Collect facts from an explicit provider composition in a deterministic store. */
 export function collectFacts(
@@ -227,6 +217,47 @@ export interface ModuleGraphProjectionInput {
   fileToModule: ReadonlyMap<string, string>;
   moduleEntrypoints: ReadonlyMap<string, ReadonlySet<string>>;
 }
+
+export interface ModuleInferenceProjectionInput {
+  project: DiscoveredProject;
+  declarations: readonly ModuleDeclarationFact[];
+}
+
+export const moduleInferenceProjector: Projector<ModuleInferenceProjectionInput, ModuleInferenceFact> = {
+  id: "architecture/module-inference",
+  version: TOOL_VERSION,
+  project: ({ project, declarations }) => {
+    const inferred = inferModulesWithDeclarations(project, declarations);
+    const fileToModule = [...inferred.fileToModule.entries()]
+      .map(([file, module]) => [relativeToRoot(project.root, file), module] as const)
+      .sort(([left], [right]) => left.localeCompare(right));
+    const moduleEntrypoints = inferred.modules
+      .map((module) => [module.id, [...module.entrypoints]] as const)
+      .sort(([left], [right]) => left.localeCompare(right));
+    return {
+      modules: Object.freeze([...inferred.modules]),
+      fileToModule,
+      moduleEntrypoints,
+    };
+  },
+};
+
+export interface DeclarativeArchitectureProjectionInput {
+  modules: readonly ArchitectureModule[];
+  declarations: readonly ModuleDeclarationFact[];
+  moduleEdges: readonly ModuleEdge[];
+  projectRoot?: string;
+}
+
+export const declarativeArchitectureProjector: Projector<
+  DeclarativeArchitectureProjectionInput,
+  DeclarativeArchitectureProjection
+> = {
+  id: "architecture/declarative-contracts",
+  version: TOOL_VERSION,
+  project: ({ modules, declarations, moduleEdges, projectRoot }) =>
+    projectDeclarativeArchitecture(modules, declarations, moduleEdges, projectRoot),
+};
 
 export interface ModuleGraphProjection {
   moduleEdges: ModuleEdge[];
@@ -271,7 +302,12 @@ export const ownershipProjector: Projector<OwnershipProjectionInput, FileOwnersh
     })),
 };
 
-export const BUILTIN_PROJECTORS = [moduleGraphProjector, ownershipProjector] as const;
+export const BUILTIN_PROJECTORS = [
+  moduleInferenceProjector,
+  moduleGraphProjector,
+  declarativeArchitectureProjector,
+  ownershipProjector,
+] as const;
 
 function pipelineComponents(components: readonly { id: string; version: string }[]): PipelineComponent[] {
   return components.map(({ id, version }) => ({ id, version }));
